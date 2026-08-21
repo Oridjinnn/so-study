@@ -1,0 +1,281 @@
+// Prisma schema — anthro-study (Phase 0)
+// Local dev uses SQLite (file). For Vercel deploy, swap the datasource to
+// Turso (libSQL) via the Prisma driver adapter; schema is identical.
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+model Course {
+  id       String  @id @default(cuid())
+  name     String  @unique
+  // Jurusan (discipline) the course is taught under. Scoped to the Course: a
+  // course belongs to one major, a major has many courses. Kept as a plain
+  // String (not a relation) to match how every other enumerable/label column
+  // here is stored (Topic.status, Topic.orderSource, QuestionBankItem.author) —
+  // a Major table would add a join without the dedup payoff that justifies the
+  // shared `Paper` + `TopicPaper` pattern, because a major carries no
+  // attributes of its own.
+  // NOT cosmetic: it is appended to the OpenAlex query (src/lib/openalex.ts)
+  // and injected as disciplinary framing into the synthesis prompt
+  // (app/api/synthesize/route.ts). Nullable so pre-existing courses migrate
+  // without a fabricated backfill; null means "no disciplinary lens".
+  major    String?
+  topics   Topic[]
+  modules  CourseModule[]
+  reconcile RPSReconcile?
+}
+
+model Topic {
+  id                String  @id @default(cuid())
+  courseId          String
+  course            Course  @relation(fields: [courseId], references: [id])
+  title             String
+  weekNumber        Int?
+  dueBeforeLecture  DateTime? // head-start: topic should be studied before this
+  // "official_rps" once the topic's position is confirmed against the official
+  // lecturer order (see RPSReconcile), "custom" until then. The default is the
+  // honest one: a topic the student invented the order for is unverified, and
+  // the dashboard shows an "urutan belum diverifikasi" badge while it is.
+  orderSource       String  @default("custom")
+  status            String  // pending | papers_fetched | module_generated | ready
+  topicPapers       TopicPaper[]
+  module            Module?
+  qaSessions        QASession[]
+  attempts          AssessmentAttempt[]
+  questionBank      QuestionBankItem[]
+}
+
+model Paper {
+  id                String  @id @default(cuid())
+  title             String
+  authors           String
+  year              Int
+  abstract          String
+  sourceUrl         String  @unique
+  citationCount     Int
+  relevanceScore    Float
+  fullTextAvailable Boolean
+  doi        String?
+  venue      String?
+  volume     String?
+  issue      String?
+  pages      String?
+  publisher  String?
+  type       String?   // "article" | "book" | "preprint" | "other"
+  providers  String?   // JSON array of contributing provider names, e.g. "openalex+crossref"
+  topicPapers       TopicPaper[]
+  excerpts          Excerpt[]
+}
+
+// many-to-many join (shared/deduplicated Paper across topics)
+model TopicPaper {
+  topicId   String
+  paperId   String
+  approved  Boolean @default(false)
+  addedAt   DateTime @default(now())
+  topic     Topic  @relation(fields: [topicId], references: [id], onDelete: Cascade)
+  paper     Paper  @relation(fields: [paperId], references: [id], onDelete: Cascade)
+  @@id([topicId, paperId])
+}
+
+model Module {
+  id              String   @id @default(cuid())
+  topicId         String   @unique
+  topic           Topic    @relation(fields: [topicId], references: [id], onDelete: Cascade)
+  contentMarkdown String
+  generatedAt     DateTime @default(now())
+  sourcePaperIds  String   // JSON array, for traceability/grounding
+  // Harness-verified length (rule: don't trust the prompt alone). These are the
+  // REAL measured word/page counts after the post-generation expansion loop, so
+  // the "X halaman" badge in the reader reflects what was actually generated,
+  // not a client-side estimate (src/lib/pages.ts, app/api/synthesize/route.ts).
+  wordCount       Int?
+  pageCount       Int?
+  // Two-tier accuracy verification, cached on the module (src/lib/tier1.ts,
+  // src/lib/critic.ts). Both are JSON blobs of the stored report shape, not
+  // relations: they are a snapshot describing THIS content, they are read as a
+  // whole by the gauge, and they are replaced (never queried field-by-field)
+  // whenever the content changes.
+  //   - verifyReport: Tier 1 (deterministic). Carries the HARD GATE
+  //     (`blocked`) — a phantom `[n]` blocks shipping the module.
+  //   - criticReport: Tier 2 (AI critic). ADVISORY ONLY — flags for human
+  //     review, cached so the paid call runs once per module and not on reads.
+  verifyReport    String?
+  criticReport    String?
+  verifiedAt      DateTime?
+  // Bounded targeted-regeneration attempts (2-attempt cap, mirroring the
+  // essay/length passes). Persisted so re-clicking "Kembangkan lebih lagi?"
+  // cannot loop the cost indefinitely across requests.
+  repairAttempts  Int      @default(0)
+  essayPrompt     String?  // auto-generated recall prompt (P0-4)
+  essayRubric     String?  // auto-generated grading rubric (P0-4)
+  courses         CourseModule[]
+  excerpts        Excerpt[]
+  chunks          ModuleChunk[]
+  versions        ModuleVersion[]
+  attempts        AssessmentAttempt[]
+}
+
+// many-to-many: a Course (matakuliah) contains many Modules, and a Module
+// can belong to many Courses. This decouples "modul" from any single
+// "matakuliah" (the old Module->Topic->Course 1:1:1 chain locked it to one).
+model CourseModule {
+  id       String @id @default(cuid())
+  courseId String
+  moduleId String
+  course   Course @relation(fields: [courseId], references: [id], onDelete: Cascade)
+  module   Module @relation(fields: [moduleId], references: [id], onDelete: Cascade)
+
+  @@unique([courseId, moduleId])
+}
+
+// embedding-backed RAG units for retrieval-augmented Q&A
+model ModuleChunk {
+  id         String @id @default(cuid())
+  moduleId   String
+  module     Module @relation(fields: [moduleId], references: [id], onDelete: Cascade)
+  chunkIndex Int
+  text       String
+  embedding  String // JSON vector (stored as text for Phase 0)
+}
+
+// claim -> excerpt -> paper grounding (not just claim -> paper)
+model Excerpt {
+  id        String @id @default(cuid())
+  moduleId  String
+  paperId   String
+  claim     String // the synthesized statement
+  quote     String // verbatim span from the source
+  location  String // section/page anchor
+  module    Module @relation(fields: [moduleId], references: [id], onDelete: Cascade)
+  paper     Paper  @relation(fields: [paperId], references: [id], onDelete: Cascade)
+}
+
+// regenerate = new version, never blind overwrite
+model ModuleVersion {
+  id              String   @id @default(cuid())
+  moduleId        String
+  module          Module   @relation(fields: [moduleId], references: [id], onDelete: Cascade)
+  version         Int
+  contentMarkdown String
+  generatedAt     DateTime @default(now())
+  changeNote      String?
+}
+
+model QASession {
+  id        String @id @default(cuid())
+  topicId   String
+  topic     Topic  @relation(fields: [topicId], references: [id], onDelete: Cascade)
+  messages  String // JSON {role, content, timestamp, retrievedChunkIds?}
+}
+
+// persisted practice attempts — required for spaced repetition (P0-3 / P1-6)
+model AssessmentAttempt {
+  id              String   @id @default(cuid())
+  moduleId        String
+  topicId         String
+  questionType    String   // "mcq" | "essay"
+  itemRef         String   // mcq question id, "essay", or question-bank id
+  prompt          String
+  response        String?
+  score           Float?
+  isCorrect       Boolean?
+  confidence      Int?     // 1..5 self-rated (Brainscape-style)
+  answeredAt      DateTime @default(now())
+  // Spaced-repetition state. SM-2 fields (intervalDays/repetitions/easeFactor)
+  // are kept for backward display; stability/difficulty are the FSRS-derived
+  // memory parameters that now drive scheduling.
+  intervalDays    Int    @default(0) // I(n): days until the next review
+  repetitions     Int    @default(0) // n: consecutive successful recalls
+  easeFactor      Float  @default(2.5) // EF: interval multiplier for correct recalls
+  stability       Float  @default(1) // FSRS stability: days until ~90% retention
+  difficulty      Float  @default(5) // FSRS difficulty: item difficulty (1..10)
+  scheduledNextAt DateTime? // next review date from the scheduler
+  module          Module   @relation(fields: [moduleId], references: [id], onDelete: Cascade)
+  topic           Topic    @relation(fields: [topicId], references: [id], onDelete: Cascade)
+}
+
+// student-authored / edited recall items (generation effect, P1-8)
+model QuestionBankItem {
+  id          String   @id @default(cuid())
+  topicId     String
+  moduleId    String?
+  stem        String
+  options     String   // JSON array of option strings
+  answer      String
+  explanation String?
+  author      String   // "ai" | "student"
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  topic       Topic    @relation(fields: [topicId], references: [id], onDelete: Cascade)
+}
+
+// R1 mitigation (Risk Register: "Topic order mismatches real lecturer sequence",
+// High/High). The student normally starts studying in a self-chosen order and
+// only later gets the official RPS/syllabus from the lecturer, so this records
+// that official order AFTER the fact and drives the custom-vs-official diff
+// view (`src/lib/rps.ts`, `GET/PUT /api/rps/[courseId]`).
+//
+// One reconciliation per course (`courseId @unique`) so re-pasting a corrected
+// order upserts instead of accumulating stale rows.
+//
+// Deliberate deviation from the original (pre-`20260818164459_fsrs_cleanup`)
+// shape: the `diff` column is NOT restored. A stored diff goes stale the moment
+// a topic is added, renamed or deleted, and would then misreport the very risk
+// it exists to surface. `officialOrder` is the durable student input and
+// `customOrder` is an audit snapshot of what they had been studying at reconcile
+// time; the diff itself is recomputed on every read from live Topic rows.
+//
+// DO NOT DELETE without an explicit decision logged in ROADMAP.md. "Nothing
+// uses it yet" is not sufficient justification — that reasoning already removed
+// this model once while R1 remained High/High and unmitigated. Check the Risk
+// Register first.
+model RPSReconcile {
+  id            String   @id @default(cuid())
+  courseId      String   @unique
+  course        Course   @relation(fields: [courseId], references: [id], onDelete: Cascade)
+  officialOrder String   // JSON array of topic titles, in the lecturer's order
+  customOrder   String   // JSON array: snapshot of the student's order when reconciled
+  reconciledAt  DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+}
+
+// cost observability
+model AIUsage {
+  id            String   @id @default(cuid())
+  topicId       String?
+  kind          String   // "synthesize" | "qa" | "grade"
+  tokensIn      Int
+  tokensOut     Int
+  estimatedCost Float
+  createdAt     DateTime @default(now())
+}
+
+// Real iOS web-push requires the app to be installed to the Home Screen
+// (standalone) AND the student to grant notification permission. A single-user
+// app, so subscriptions are NOT scoped to a student id — there is only ever one
+// student. `endpoint` is globally unique per browser push context, so it is the
+// upsert key (re-subscribing just refreshes the rotated keys).
+model PushSubscription {
+  id        String   @id @default(cuid())
+  endpoint  String   @unique
+  p256dh    String
+  auth      String
+  createdAt DateTime @default(now())
+}
+
+// Single-row (singleton) settings for the one student. Holds the optional
+// onboarding `studentName` (mirrors the client-side `soso.profile`) so the
+// server-side push copy can personalize, and `lastNotificationCopyId` so the
+// rotating Soso copy never repeats the same line twice in a row.
+model Settings {
+  id                     String   @id @default("singleton")
+  studentName            String?
+  lastNotificationCopyId String?
+  updatedAt              DateTime @updatedAt
+}

@@ -39,3 +39,12 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# openalex response cache (regenerated at runtime)
+.cache/
+
+# local SQLite database + companions (regenerated via `prisma migrate dev`)
+prisma/*.db
+prisma/*.db-journal
+prisma/*.db-wal
+prisma/*.db-shm

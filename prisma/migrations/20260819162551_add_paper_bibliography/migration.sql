@@ -1,0 +1,9 @@
+-- AlterTable
+ALTER TABLE "Paper" ADD COLUMN "doi" TEXT;
+ALTER TABLE "Paper" ADD COLUMN "issue" TEXT;
+ALTER TABLE "Paper" ADD COLUMN "pages" TEXT;
+ALTER TABLE "Paper" ADD COLUMN "providers" TEXT;
+ALTER TABLE "Paper" ADD COLUMN "publisher" TEXT;
+ALTER TABLE "Paper" ADD COLUMN "type" TEXT;
+ALTER TABLE "Paper" ADD COLUMN "venue" TEXT;
+ALTER TABLE "Paper" ADD COLUMN "volume" TEXT;

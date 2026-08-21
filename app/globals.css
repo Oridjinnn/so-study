@@ -1,8 +1,94 @@
 @import "tailwindcss";
 
+/* Dark mode is class-driven with an OS-preference fallback.
+
+   Tailwind v4 ships `dark:` as `@media (prefers-color-scheme: dark)`, which an
+   in-app toggle can never override. Redefining the variant makes every existing
+   `dark:*` utility in the app follow the `.dark` class that the Sidebar theme
+   toggle puts on `<html>`, while the second branch keeps `prefers-color-scheme`
+   as the *default* for anyone who has not chosen a theme yet (no class on the
+   root element, so nothing to hydrate before the first paint). */
+@custom-variant dark {
+  &:where(.dark, .dark *) {
+    @slot;
+  }
+  @media (prefers-color-scheme: dark) {
+    &:where(:root:not(.light):not(.dark), :root:not(.light):not(.dark) *) {
+      @slot;
+    }
+  }
+}
+
+/* The module reader is a bounded, independently-scrollable panel (ReadStep).
+   A visible scrollbar lets the student see how far through the ~10-page module
+   they are. Headings get top margin so the sticky read-header never hides them
+   when the TOC jumps to a section. */
+.reader-scroll {
+  scrollbar-width: thin;
+  scrollbar-color: var(--color-border) transparent;
+}
+.reader-scroll::-webkit-scrollbar {
+  width: 14px;
+}
+.reader-scroll::-webkit-scrollbar-track {
+  background: rgba(0, 0, 0, 0.04);
+  border-radius: 9999px;
+}
+.reader-scroll::-webkit-scrollbar-thumb {
+  background: #a1a1aa;
+  border: 4px solid transparent;
+  background-clip: padding-box;
+  border-radius: 9999px;
+}
+.reader-scroll::-webkit-scrollbar-thumb:hover {
+  background: #71717a;
+}
+.reader-prose :is(h1, h2, h3, h4) {
+  scroll-margin-top: 4rem;
+}
+
+/* Design tokens (Tailwind v4 `@theme`) — every token here is used by a utility
+   or a component class below; unused scales were pruned so the palette cannot
+   drift from the UI. `muted`/`border` are AA-tuned on the light `background`
+   (`--color-muted` is zinc-500 = 4.6:1 on white, replacing zinc-400's 2.8:1). */
+@theme {
+  /* Brand — primary buttons (`bg-brand-600` + `hover:bg-brand-700`), focus
+     rings and selected states (`ring-brand-500`). */
+  --color-brand-500: #6366f1;
+  --color-brand-600: #4f46e5;
+  --color-brand-700: #4338ca;
+
+  /* Semantic surfaces / de-emphasized text */
+  --color-muted: #71717a;
+  --color-border: #e4e4e7;
+  --color-card: #ffffff;
+
+  /* Link ink. Separate from `brand-700` because that token doubles as the
+     button *hover* fill: a link needs to invert on dark, a fill must not. */
+  --color-link: #4338ca;
+
+  /* Radius + reading measure */
+  --radius-card: 0.75rem;
+  --reader-measure: 66ch;
+}
+
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  color-scheme: light;
+  --background: #f7f7f8;
+  --foreground: #18181b;
+
+  /* Dark palette, declared once. Both paths below (OS preference and the
+     explicit `.dark` class) map these onto the live tokens, so the two can
+     never disagree about what "dark" means. */
+  --dark-background: #0b0b0f;
+  --dark-foreground: #ededed;
+  --dark-card: #16161c;
+  --dark-border: #27272a;
+  --dark-muted: #a1a1aa;
+  --dark-brand-500: #818cf8;
+  --dark-brand-600: #6366f1;
+  --dark-brand-700: #4f46e5;
+  --dark-link: #a5b4fc;
 }
 
 @theme inline {
@@ -12,15 +98,234 @@
   --font-mono: var(--font-geist-mono);
 }
 
+/* No stored choice (`<html>` carries neither class) → follow the system. */
 @media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
+  :root:not(.light):not(.dark) {
+    color-scheme: dark;
+    --background: var(--dark-background);
+    --foreground: var(--dark-foreground);
+    --color-card: var(--dark-card);
+    --color-border: var(--dark-border);
+    --color-muted: var(--dark-muted);
+    --color-brand-500: var(--dark-brand-500);
+    --color-brand-600: var(--dark-brand-600);
+    --color-brand-700: var(--dark-brand-700);
+    --color-link: var(--dark-link);
   }
+}
+
+/* Explicit choice from the in-app toggle (localStorage key `theme`). Note the
+   dark `brand-700` stays a *darker* indigo: it is the hover fill under white
+   button text (`bg-brand-700` + `text-white` = 6.3:1), while `--color-link`
+   inverts to indigo-300 for readable link text on the dark surface (9:1). */
+:root.dark {
+  color-scheme: dark;
+  --background: var(--dark-background);
+  --foreground: var(--dark-foreground);
+  --color-card: var(--dark-card);
+  --color-border: var(--dark-border);
+  --color-muted: var(--dark-muted);
+  --color-brand-500: var(--dark-brand-500);
+  --color-brand-600: var(--dark-brand-600);
+  --color-brand-700: var(--dark-brand-700);
+  --color-link: var(--dark-link);
 }
 
 body {
   background: var(--background);
   color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  font-family: var(--font-sans), system-ui, sans-serif;
+  /* PWA safe-area insets. viewportFit:"cover" lets the app shell sit under the
+     rounded corners / home indicator on iPad; pad it so content and the sticky
+     header never collide with them (paired with the header's top offset below). */
+  padding-top: env(safe-area-inset-top);
+  padding-right: env(safe-area-inset-right);
+  padding-bottom: env(safe-area-inset-bottom);
+  padding-left: env(safe-area-inset-left);
+}
+
+/* WCAG 2.2 target size (2.5.8) + Apple HIG: on touch/pen input every tappable
+   control is at least 44px tall; mouse/trackpad users keep the denser layout. */
+@media (pointer: coarse) {
+  .tap {
+    min-height: 44px;
+  }
+}
+
+/* Accessibility safety net: any focusable that opts into nothing else still
+   gets a visible brand-coloured focus ring (WCAG 2.4.7). The existing
+   `focus-visible:ring-*` + `focus-visible:outline-none` components override this
+   (their `outline-none` wins on specificity), so we never double up. */
+:where(a, button, input, select, textarea, [tabindex]):focus-visible {
+  outline: 2px solid var(--color-brand-500);
+  outline-offset: 2px;
+}
+
+/* Long-form module reader (table of contents to sections). Adopted by the
+   reader view (`app/components/Workspace.tsx` — owned elsewhere — applies
+   `.reader-prose` to the module body); generous measure + leading for sustained
+   reading on iPad, 18px growing to 20px once there is room for it. */
+.reader-prose {
+  max-width: var(--reader-measure);
+  font-size: 18px;
+  line-height: 1.7;
+  color: var(--color-foreground);
+}
+@media (min-width: 48rem) {
+  .reader-prose {
+    font-size: 20px;
+  }
+}
+.reader-prose h1,
+.reader-prose h2,
+.reader-prose h3,
+.reader-prose h4 {
+  line-height: 1.25;
+  margin-top: 1.75em;
+  margin-bottom: 0.6em;
+}
+.reader-prose h1:first-child,
+.reader-prose h2:first-child,
+.reader-prose h3:first-child {
+  margin-top: 0;
+}
+.reader-prose p {
+  margin-bottom: 1em;
+}
+.reader-prose ul,
+.reader-prose ol {
+  margin: 1em 0;
+  padding-left: 1.5em;
+}
+.reader-prose ul {
+  list-style: disc;
+}
+.reader-prose ol {
+  list-style: decimal;
+}
+.reader-prose a {
+  color: var(--color-link);
+  text-underline-offset: 2px;
+}
+.reader-prose blockquote {
+  border-left: 3px solid var(--color-border);
+  padding-left: 1em;
+  color: var(--color-muted);
+  margin: 1em 0;
+}
+.reader-prose pre,
+.reader-prose table {
+  margin: 1em 0;
+  font-size: 0.9em;
+}
+
+/* Honour users who ask for less motion (vestibular safety). jsdom has no
+   layout, but real browsers collapse transitions/animations to a near-instant
+   step so nothing slides or pulses unexpectedly. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+/* First-run Soso onboarding: a gentle fade/slide between its two screens. Existing
+   utility classes already animate elsewhere (hover/opacity), so this only adds the
+   one keyframe the wizard needs — no new animation dependency. The
+   `prefers-reduced-motion` guard above collapses it to a near-instant step. */
+@keyframes soso-fade {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+.soso-fade {
+  animation: soso-fade 300ms ease-out;
+}
+
+/* Manual print fallback (roadmap Phase 3). The primary PDF export is now
+   generated server-side at /api/modules/[id]/export?format=pdf (no print
+   dialog, works directly on iPad Safari). These @media print rules remain as a
+   fallback for anyone who prints the reader in the browser: drop the app chrome,
+   force light ink, keep the sources. */
+@media print {
+  /* Dark mode is a screen preference; paper is always dark ink on white, so the
+     `.dark` mapping above is undone here (both selectors, or the class would
+     win on specificity). */
+  :root,
+  :root.dark {
+    color-scheme: light;
+    --background: #ffffff;
+    --foreground: #000000;
+    --color-card: #ffffff;
+    --color-border: #d4d4d8;
+    --color-muted: #3f3f46;
+    --color-link: #1d4ed8;
+  }
+
+  html,
+  body {
+    height: auto !important;
+    overflow: visible !important;
+  }
+
+  body {
+    background: #ffffff;
+    color: #000000;
+  }
+
+  /* Dark-theme `dark:bg-*`/`dark:text-*` utilities would print as black boxes
+     with pale text, so a dark-mode reader is flattened back to light ink. */
+  :root.dark * {
+    background-color: transparent !important;
+    color: #000000 !important;
+  }
+
+  /* The app shell is a fixed-height flex column with scroll containers; a
+     printed module must flow across pages instead of being clipped to one. */
+  body * {
+    overflow: visible !important;
+    max-height: none !important;
+  }
+
+  /* Navigation, dialogs and toasts are not part of the document. */
+  aside,
+  nav[aria-label="Daftar isi"],
+  [aria-label="Ekspor modul"] {
+    display: none !important;
+  }
+
+  article,
+  section {
+    border: 0 !important;
+    box-shadow: none !important;
+  }
+
+  /* Never split a heading from the text it introduces. */
+  h1,
+  h2,
+  h3,
+  h4 {
+    break-after: avoid;
+    page-break-after: avoid;
+  }
+
+  a {
+    text-decoration: underline;
+  }
+
+  /* Citations are the grounding — a printed module must keep its URLs (I5). */
+  a[href^="http"]::after {
+    content: " (" attr(href) ")";
+    font-size: 0.75em;
+    word-break: break-all;
+  }
 }
