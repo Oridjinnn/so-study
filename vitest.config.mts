@@ -31,6 +31,11 @@ export default defineConfig({
           environment: "jsdom",
           include: ["app/**/*.dom.test.tsx"],
           setupFiles: ["./vitest.setup.ts"],
+          // jsdom + @testing-library/user-event (real timers) is slow on the
+          // first test of a file and under parallel load; the 5s default flakes
+          // on healthy tests. 15s is a floor, not a licence to hang.
+          testTimeout: 15000,
+          hookTimeout: 15000,
         },
       },
     ],
