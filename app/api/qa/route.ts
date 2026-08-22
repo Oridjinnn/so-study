@@ -1,8 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
-import { generate } from "@/src/lib/gemini";
+import { embedTexts, generate } from "@/src/lib/gemini";
 import { logAIUsage } from "@/src/lib/aiusage";
 import { prisma } from "@/src/lib/prisma";
-import { rankChunks } from "@/src/lib/retrieval";
+import { rankChunks, rankChunksHybrid, type RankableChunk } from "@/src/lib/retrieval";
 import {
   GUARD_STATUS,
   LIMITS,
@@ -51,11 +51,33 @@ export async function POST(req: NextRequest) {
   if (body.moduleId) {
     const rows = await prisma.moduleChunk.findMany({
       where: { moduleId: body.moduleId },
-      select: { id: true, text: true },
+      select: { id: true, text: true, embedding: true },
       take: LIMITS.chunkCount,
     });
     if (rows.length > 0) {
-      const ranked = rankChunks(rows.map((r) => ({ id: r.id, text: r.text })), question, RETRIEVE_K);
+      const chunks: RankableChunk[] = rows.map((r) => {
+        let embedding: number[] | undefined;
+        try {
+          const parsed = JSON.parse(r.embedding);
+          if (Array.isArray(parsed) && parsed.length > 0) embedding = parsed as number[];
+        } catch {
+          // Legacy stub "[]" or unparseable — lexical fallback handles it.
+        }
+        return { id: r.id, text: r.text, embedding };
+      });
+      // Dense retrieval is best-effort: if embedding the query fails (no key,
+      // upstream error), fall back to lexical-only ranking. The hybrid ranker
+      // also collapses to lexical when no chunk carries a vector.
+      let queryEmbedding: number[] = [];
+      try {
+        const embedded = await embedTexts([question]);
+        queryEmbedding = embedded[0] ?? [];
+      } catch {
+        queryEmbedding = [];
+      }
+      const ranked = queryEmbedding.length
+        ? rankChunksHybrid(chunks, question, queryEmbedding, RETRIEVE_K)
+        : rankChunks(chunks, question, RETRIEVE_K);
       retrievedTexts = ranked.map((r) => r.text);
     }
   } else if (legacyChunks.length > 0) {

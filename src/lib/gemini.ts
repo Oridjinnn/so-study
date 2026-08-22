@@ -23,6 +23,10 @@ export class GeminiError extends Error {
 
 const DEFAULT_MODEL = "gemini-3.6-flash";
 
+// Embedding model for dense RAG retrieval. Cheap, no generation; one batch call
+// covers a whole module's chunks. `text-embedding-004` is the stable GA model.
+const EMBED_MODEL = process.env.GEMINI_EMBED_MODEL ?? "text-embedding-004";
+
 // Approximate list pricing (USD per 1M tokens) for cost observability only.
 // Estimates, not billing guarantees; adjust if your tier differs.
 const INPUT_RATE_PER_1M = 0.1;
@@ -188,4 +192,61 @@ export async function streamGenerate(opts: GenerateOptions): Promise<ReadableStr
     throw new GeminiError("Gemini stream returned no body.", res.status);
   }
   return res.body;
+}
+
+interface GeminiEmbedResponse {
+  embeddings?: { values?: number[] }[];
+  usageMetadata?: { promptTokenCount?: number };
+}
+
+/**
+ * Batch embedding for dense RAG retrieval. One HTTP call embeds every supplied
+ * text (a module's chunks), so synthesis makes a single embedding round-trip
+ * instead of one per chunk. Returns one vector per input, in input order.
+ *
+ * Callers MUST treat this as best-effort: on any failure (missing key, upstream
+ * error, surprise shape) they fall back to lexical retrieval and store an empty
+ * embedding — dense retrieval improves grounding, it must never gate the module.
+ */
+export async function embedTexts(texts: string[]): Promise<number[][]> {
+  const apiKey = process.env.GEMINI_API_KEY;
+  if (!apiKey) {
+    throw new GeminiError("GEMINI_API_KEY is not set (server-side env only).");
+  }
+  if (texts.length === 0) return [];
+  const url = `https://generativelanguage.googleapis.com/v1beta/models/${EMBED_MODEL}:batchEmbedContents`;
+
+  const body = {
+    requests: texts.map((text) => ({
+      model: `models/${EMBED_MODEL}`,
+      content: { parts: [{ text }] },
+    })),
+  };
+
+  const res = await fetch(url, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "x-goog-api-key": apiKey,
+    },
+    body: JSON.stringify(body),
+  });
+
+  if (!res.ok) {
+    const detail = await res.text().catch(() => "");
+    throw new GeminiError(`Gemini embed HTTP ${res.status}: ${detail.slice(0, 400)}`, res.status);
+  }
+
+  const data = (await res.json()) as GeminiEmbedResponse;
+  const emb = data.embeddings ?? [];
+  if (emb.length !== texts.length || emb.some((e) => !Array.isArray(e.values))) {
+    throw new GeminiError("Gemini embed returned an unexpected shape.", res.status);
+  }
+  return emb.map((e) => e.values as number[]);
+}
+
+/** Prompt-token cost of an embedding batch, for the AIUsage panel (no output). */
+export function embedUsage(data: unknown): GeminiUsage {
+  const meta = (data as GeminiEmbedResponse | undefined)?.usageMetadata;
+  return { promptTokens: meta?.promptTokenCount ?? 0, candidatesTokens: 0 };
 }

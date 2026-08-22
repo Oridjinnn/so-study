@@ -1,67 +1,64 @@
 import { describe, expect, it } from "vitest";
-import { rankChunks } from "./retrieval";
+import { cosineSimilarity, rankChunks, rankChunksHybrid, type RankableChunk } from "./retrieval";
 
-const CHUNKS = [
-  { id: "c1", text: "Fotosintesis mengubah cahaya matahari menjadi energi kimia pada tumbuhan." },
-  { id: "c2", text: "Respirasi seluler melepas energi dari glukosa di dalam mitokondria." },
-  { id: "c3", text: "Kromosom membawa materi genetik yang diwariskan dari induk ke keturunan." },
-];
-
-describe("rankChunks", () => {
-  it("ranks the most-overlapping chunk first", () => {
-    const ranked = rankChunks(CHUNKS, "fotosintesis cahaya matahari tumbuhan", 3);
-    expect(ranked[0].id).toBe("c1");
-    expect(ranked[0].score).toBeGreaterThan(0);
+describe("cosineSimilarity", () => {
+  it("is 1 for identical vectors", () => {
+    expect(cosineSimilarity([1, 2, 3], [1, 2, 3])).toBeCloseTo(1, 6);
   });
 
-  it("returns empty array when there are no chunks", () => {
-    expect(rankChunks([], "apapun", 5)).toEqual([]);
+  it("is 0 for orthogonal vectors", () => {
+    expect(cosineSimilarity([1, 0], [0, 1])).toBeCloseTo(0, 6);
   });
 
-  it("respects the requested k", () => {
-    const ranked = rankChunks(CHUNKS, "energi sel", 2);
-    expect(ranked.length).toBe(2);
+  it("is 0 for empty or mismatched vectors (no poison)", () => {
+    expect(cosineSimilarity([], [1])).toBe(0);
+    expect(cosineSimilarity([1, 2], [1, 2, 3])).toBe(0);
+  });
+});
+
+describe("rankChunksHybrid", () => {
+  const chunks: RankableChunk[] = [
+    { id: "a", text: "habitus adalah disposisi terinternalisasi bourdieu" },
+    { id: "b", text: "modal budaya diturunkan dari keluarga ke sekolah" },
+    { id: "c", text: "kapitol dan benua dalam novel fiksi" },
+  ];
+
+  it("collapses to lexical ranking when no query embedding is supplied", () => {
+    const ranked = rankChunksHybrid(chunks, "habitus bourdieu", [], 3);
+    expect(ranked[0].id).toBe("a");
   });
 
-  it("falls back to the first k chunks when the query has no lexical overlap", () => {
-    const ranked = rankChunks(CHUNKS, "zxqwv yyy kjhgf", 2);
-    expect(ranked.map((c) => c.id)).toEqual(["c1", "c2"]);
-    expect(ranked.every((c) => c.score === 0)).toBe(true);
-  });
-
-  it("ignores stopwords so they do not dominate the ranking", () => {
-    // "dan" / "yang" are stopwords; the real signal term is "mitokondria".
-    const ranked = rankChunks(CHUNKS, "dan yang mitokondria", 3);
-    expect(ranked[0].id).toBe("c2");
-  });
-
-
-  it("never produces NaN when every chunk is stopwords (avgdl === 0)", () => {
-    const stopwordChunks = [
-      { id: "s1", text: "dan yang pada untuk dengan" },
-      { id: "s2", text: "the a an and or of to in on" },
+  it("ranks a lexically-absent but semantically-matching chunk via dense signal", () => {
+    // Query shares NO tokens with chunk b, but we hand it b's exact vector so
+    // dense cosine = 1. Hybrid must still surface b above the keyword match.
+    const queryEmbedding = [0.9, 0.1, 0.2];
+    const chunksWithVec: RankableChunk[] = [
+      { id: "a", text: "habitus adalah disposisi terinternalisasi bourdieu", embedding: [0.1, 0.9, 0.2] },
+      { id: "b", text: "modal budaya diturunkan dari keluarga ke sekolah", embedding: [0.9, 0.1, 0.2] },
+      { id: "c", text: "kapitol dan benua dalam novel fiksi", embedding: [0.2, 0.2, 0.9] },
     ];
-    const ranked = rankChunks(stopwordChunks, "mitokondria fotosintesis", 2);
-    // No lexical overlap -> fallback returns the first k chunks, all finite.
-    expect(ranked.every((c) => Number.isFinite(c.score))).toBe(true);
-    expect(ranked.every((c) => c.score === 0)).toBe(true);
-    expect(ranked.length).toBe(2);
+    const ranked = rankChunksHybrid(chunksWithVec, "whatever totally different words", queryEmbedding, 3);
+    expect(ranked[0].id).toBe("b");
   });
 
-  it("uses IDF-only scoring (no NaN) when avgdl is zero but a term matches", () => {
-    // avgdl === 0 because every chunk tokenizes to nothing, so the guard path
-    // must keep scores finite rather than NaN.
-    const stopwordChunks = [
-      { id: "s1", text: "dan yang anak" },
-      { id: "s2", text: "the a or book" },
-    ];
-    const ranked = rankChunks(stopwordChunks, "book", 2);
-    expect(ranked.every((c) => Number.isFinite(c.score))).toBe(true);
+  it("respects k and returns empty for no chunks", () => {
+    expect(rankChunksHybrid([], "q", [1, 2, 3], 5)).toEqual([]);
+    const ranked = rankChunksHybrid(chunks, "habitus", [], 1);
+    expect(ranked).toHaveLength(1);
   });
+});
 
-  it("is deterministic across calls", () => {
-    const a = rankChunks(CHUNKS, "energi tumbuhan", 3);
-    const b = rankChunks(CHUNKS, "energi tumbuhan", 3);
-    expect(a.map((c) => c.id)).toEqual(b.map((c) => c.id));
+describe("rankChunks (lexical baseline unchanged)", () => {
+  it("returns top-k by BM25 and never throws on empty input", () => {
+    expect(rankChunks([], "q", 3)).toEqual([]);
+    const ranked = rankChunks(
+      [
+        { id: "x", text: "habitus bourdieu" },
+        { id: "y", text: "ikan hiu laut dalam" },
+      ],
+      "habitus bourdieu",
+      2,
+    );
+    expect(ranked[0].id).toBe("x");
   });
 });

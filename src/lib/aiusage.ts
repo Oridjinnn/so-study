@@ -13,7 +13,10 @@ export type AIUsageKind =
   // (src/lib/repair.ts). Both are paid calls, so both are observable per topic —
   // an unlogged verification call is an invisible bill.
   | "critic"
-  | "repair";
+  | "repair"
+  // Dense RAG embeddings (src/lib/gemini.ts embedTexts) — a paid call per
+  // synthesis, so it belongs on the cost panel alongside the rest.
+  | "embed";
 
 // Persist a cost-observability row for every Gemini call (whitepaper §3 / §6).
 export async function logAIUsage(opts: {

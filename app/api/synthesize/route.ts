@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { generate, streamGenerate, type GeminiResult, type GeminiUsage } from "@/src/lib/gemini";
+import { embedTexts, generate, streamGenerate, type GeminiResult, type GeminiUsage } from "@/src/lib/gemini";
 import { logAIUsage } from "@/src/lib/aiusage";
 import { SourcePaper } from "@/src/lib/sources";
 import { prisma } from "@/src/lib/prisma";
@@ -505,7 +505,22 @@ export async function POST(req: NextRequest) {
       verifiedAt: new Date(),
       repairAttempts: 0,
     };
-    const chunkData = chunks.map((text, i) => ({ chunkIndex: i, text, embedding: "[]" }));
+    // Dense retrieval (ROADMAP §15 gap B). Best-effort: if embedding fails (no
+    // key, upstream error, surprise shape) we store the legacy "[]" stub and
+    // retrieval degrades to lexical — synthesis must never block on a retrieval
+    // enhancement.
+    let chunkEmbeddings: number[][] = [];
+    try {
+      chunkEmbeddings = await embedTexts(chunks);
+      await logAIUsage({ topicId: topic.id, kind: "embed", usage: { promptTokens: 0, candidatesTokens: 0 } });
+    } catch {
+      chunkEmbeddings = [];
+    }
+    const chunkData = chunks.map((text, i) => ({
+      chunkIndex: i,
+      text,
+      embedding: JSON.stringify(chunkEmbeddings[i] ?? []),
+    }));
     // P0-1: ground each excerpt to its TRUE source paper via inline citation [n].
     const excerptData = claims.length
       ? claims

@@ -19,6 +19,80 @@ export interface RetrievableChunk {
   text: string;
 }
 
+/** A chunk that may carry a dense vector (legacy modules store `[]`). */
+export interface RankableChunk extends RetrievableChunk {
+  embedding?: number[];
+}
+
+/**
+ * Cosine similarity of two equal-length vectors, in [-1, 1]. Returns 0 for empty
+ * or mismatched vectors so a missing/legacy embedding degrades to "no signal"
+ * rather than poisoning the fused score.
+ */
+export function cosineSimilarity(a: number[], b: number[]): number {
+  if (a.length === 0 || b.length === 0 || a.length !== b.length) return 0;
+  let dot = 0;
+  let na = 0;
+  let nb = 0;
+  for (let i = 0; i < a.length; i += 1) {
+    dot += a[i] * b[i];
+    na += a[i] * a[i];
+    nb += b[i] * b[i];
+  }
+  if (na === 0 || nb === 0) return 0;
+  return dot / (Math.sqrt(na) * Math.sqrt(nb));
+}
+
+const RRF_K = 60;
+
+/**
+ * Reciprocal Rank Fusion of lexical BM25 and dense cosine. Both rankers produce
+ * a full ordering over the chunks; we fuse them so a chunk that ranks well in
+ * EITHER signal surfaces — keyword overlap catches terminology, cosine catches
+ * paraphrase/translation that shares no tokens (the Indonesian-module /
+ * English-abstract case lexical BM25 misses).
+ *
+ * When no query embedding (or no chunk has one), the dense signal contributes 0
+ * and the result collapses to pure lexical ranking — seamless legacy fallback,
+ * no caller branching required.
+ */
+export function rankChunksHybrid(
+  chunks: RankableChunk[],
+  query: string,
+  queryEmbedding: number[],
+  k: number,
+): RankedChunk[] {
+  if (chunks.length === 0) return [];
+
+  const lexical = rankChunks(chunks, query, chunks.length);
+  const lexRank = new Map(lexical.map((c, i) => [c.id, i + 1]));
+
+  const haveDense = queryEmbedding.length > 0 && chunks.some((c) => c.embedding && c.embedding.length > 0);
+  const denseRank = new Map<string, number>();
+  if (haveDense) {
+    const dense = chunks
+      .map((c) => ({
+        id: c.id,
+        score: c.embedding && c.embedding.length ? cosineSimilarity(queryEmbedding, c.embedding) : -1,
+      }))
+      .sort((a, b) => b.score - a.score)
+      .map((c, i) => [c.id, i + 1] as [string, number]);
+    for (const [id, rank] of dense) denseRank.set(id, rank);
+  }
+
+  const rrf = (rank: number) => 1 / (RRF_K + rank);
+
+  return chunks
+    .map((c) => {
+      const lex = lexRank.get(c.id) ?? chunks.length + 1;
+      const dense = denseRank.get(c.id);
+      const score = rrf(lex) + (dense != null ? rrf(dense) : 0);
+      return { id: c.id, text: c.text, score };
+    })
+    .sort((a, b) => b.score - a.score)
+    .slice(0, Math.max(0, k));
+}
+
 const K1 = 1.5;
 const B = 0.75;
 
