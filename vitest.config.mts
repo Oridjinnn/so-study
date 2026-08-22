@@ -13,6 +13,12 @@ import { defineConfig } from "vitest/config";
 const rootDir = path.dirname(fileURLToPath(import.meta.url));
 const resolve = { alias: { "@": rootDir } };
 
+// Session signing key for the tests. src/lib/auth.ts FAILS CLOSED without one
+// (that is the point), so the test environment must supply a value — it is a
+// fixed literal, never a real secret, and every test that cares about the
+// missing-secret path deletes it explicitly.
+const env = { SESSION_SECRET: "test-session-secret-do-not-use-in-production" };
+
 export default defineConfig({
   test: {
     projects: [
@@ -22,6 +28,7 @@ export default defineConfig({
           name: "node",
           environment: "node",
           include: ["src/**/*.test.ts", "app/**/*.test.ts"],
+          env,
         },
       },
       {
@@ -36,6 +43,7 @@ export default defineConfig({
           // on healthy tests. 15s is a floor, not a licence to hang.
           testTimeout: 15000,
           hookTimeout: 15000,
+          env,
         },
       },
     ],
