@@ -828,6 +828,79 @@ bibliographic columns (`doi`, `venue`, `volume`, `issue`, `pages`, `publisher`, 
 - **Internationally-broad paper review.** The approval gate (`Tinjauan paper`) now presents exactly 10
   candidates, guaranteed to include ≥2 international journals written in English or another language
   (heuristic `isInternationalJournal` in `scoring.ts`; `selectShortlist` enforces `minInternational: 2`).
-  `PaperReview` surfaces a "Jurnal internasional: N/2" badge and a "Jurnal intl." chip per paper so the
-  breadth requirement is verifiable. `CandidatePaper` gained `venue`/`type` (I12 sync) so the check reaches
-  the client.
+   `PaperReview` surfaces a "Jurnal internasional: N/2" badge and a "Jurnal intl." chip per paper so the
+   breadth requirement is verifiable. `CandidatePaper` gained `venue`/`type` (I12 sync) so the check reaches
+   the client.
+
+---
+
+## 17. Verification & Hardening Pass (2026-08-21)
+
+**Status:** EXECUTED 2026-08-21. Trigger: an independent review of the running app found the
+**CI gate red**, several gaps **closed but not enforced**, and **doc/code drift** (the ROADMAP was
+2 days ahead of the code and contradicted it). This pass does NOT add product features — it makes
+the existing claims true and verifiable. `bash scripts/ci.sh` is green at close (see "Outcomes").
+
+### Corrections to earlier claims (rule I12)
+
+1. **ROADMAP §6 / §15 said "ci.sh PASS — 362/362 / 380/380 tests".** At review the committed tree had
+   **3 failing DOM tests** (all `testTimeout` 5000ms exceeded in `Workspace`/`SosoOnboarding`/
+   `ReviewQueue` under parallel jsdom load — not logic failures). **Fixed:** `vitest.config.mts` sets
+   `testTimeout`/`hookTimeout = 15000` on the `dom` project. Full suite now **608 tests, 0 failing**.
+2. **ROADMAP §13 WS8 said "API route tests … skipped; need Prisma/Gemini mocking harness."** False at
+   review — 9 `route.test.ts` already existed. This pass **adds the missing 6** so every load-bearing
+   server route is now integration-tested: `qa`, `grade`, `mcq`, `attempts`, `progress`, `rps`
+   (plus `push/send`). Total route tests: **15**.
+3. **"Grounding sifatnya advisory, bukan di-enforce."** Partially true and now fixed. Tier 1
+   (`src/lib/tier1.ts`) was already a hard gate on **phantom citations** (`blocked`), and the reader
+   body + exports were already withheld. What was still open: **Tanya (Q&A) and Latih (practice)**
+   remained usable on a blocked module. `Workspace.tsx` now withholds **all four** surfaces (Baca body,
+   Tanya, Latih, ekspor) when `tier1.blocked` — covered by a new DOM test.
+4. **Gap B (semantic retrieval) marked "Deferred (needs embedder)".** **Closed.** Dense retrieval now
+   uses Gemini `text-embedding-004` batch embeddings (`embedTexts` in `src/lib/gemini.ts`), stored on
+   `ModuleChunk.embedding` at synthesis, and fused with BM25 via Reciprocal Rank Fusion
+   (`rankChunksHybrid` in `src/lib/retrieval.ts`). Lexical-only is the graceful fallback when embedding
+   fails or a legacy module has no vector. Gap B is **done**, not deferred.
+5. **Push "cron is a guarded no-op".** The `push/send` cron route was already a real `web-push` sender
+   (subscription store, stale 404/410 cleanup, studied-today skip); only `cron/daily-reminder` was a
+   no-op. This pass **adds a `push/send` integration test** proving the send/stale-drop path. Push still
+   requires deployment + an installed PWA + VAPID env (out of scope, owner deploys).
+
+### Workstreams
+
+- **CI gate:** `vitest.config.mts` — `dom` project `testTimeout`/`hookTimeout = 15000`.
+- **Dense retrieval:** `src/lib/gemini.ts` (`embedTexts`, `embedUsage`) + `src/lib/retrieval.ts`
+  (`cosineSimilarity`, `rankChunksHybrid`) + `app/api/synthesize/route.ts` (store embeddings,
+  best-effort, lexical fallback) + `app/api/qa/route.ts` (embed query, hybrid rank) +
+  `src/lib/aiusage.ts` (`"embed"` kind) + `src/lib/retrieval.test.ts` (new, 7 tests).
+- **Grounding enforcement:** `app/components/Workspace.tsx` (withhold Tanya + Latih when `blocked`) +
+  `app/components/Workspace.dom.test.tsx` (new hard-gate test).
+- **Route integration tests (new):** `app/api/qa/route.test.ts`, `app/api/grade/route.test.ts`,
+  `app/api/mcq/route.test.ts`, `app/api/attempts/route.test.ts`, `app/api/progress/route.test.ts`,
+  `app/api/rps/[courseId]/route.test.ts`, `app/api/push/send/route.test.ts`.
+
+### Outcomes
+
+- `bash scripts/ci.sh` green: `tsc --noEmit` clean, `eslint` 0 errors, **608 tests, 0 failing** (was 3 failing).
+- Retrieval is now hybrid (lexical + dense), closing Gap B.
+- Tier-1 hard gate covers all four module surfaces.
+- Every learning-loop server route has an integration test.
+
+### Genuinely still open (not claimed done here)
+
+- **Deploy (Vercel + Turso)** — owner deploys; iPad reach depends on it.
+- **Real iPad / VoiceOver device test** — cannot be run in this environment; checklist below.
+- **Gap G-rest** (error-detection / dependency-graph / conceptual practice), **H** (highlight→card),
+  **I** (CRDT sync), **L** (efficacy quiz) — deferred as before.
+- **Single mega-commit / CHANGELOG discipline** — this pass is delivered as reviewed changes; the
+  repo's history discipline (rule I0/G0/E0) is a process item, not a code fix.
+
+### iPad / VoiceOver manual test checklist (real device — not automatable here)
+
+- [ ] Install to Home Screen on iPad Safari; launch standalone (not a tab).
+- [ ] Grant notification permission; confirm Soso reminder can arrive (needs deploy + VAPID).
+- [ ] VoiceOver: tab through Baca/Tanya/Latih/Sumber; rotor announces tablist + dialogs.
+- [ ] Offline: open a cached module, confirm Tanya/Latih/ekspor refuse with the offline message.
+- [ ] Closed-book: confirm Baca/Tanya/Sumber lock during Latih.
+- [ ] 44px touch targets; no hover-only affordances with Magic Keyboard only.
+- [ ] Dynamic Type: module reader reflows at large text sizes.

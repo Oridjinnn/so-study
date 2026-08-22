@@ -87,7 +87,7 @@ code, so it must be safe in both.
 | `aiusage.ts` | Writes the `AIUsage` cost row for every LLM call |
 | `mcq.ts` | Deterministic cloze MCQ generation + `mcqHelpers` (chunking, claim extraction) |
 | `scheduler.ts` | FSRS-derived spaced repetition: `review`, `isDue`, `outcomeToGrade`, `INITIAL_STATE` |
-| `retrieval.ts` | Pure BM25-lite lexical ranker (`rankChunks`) used by `POST /api/qa` to pick top-k `ModuleChunk` |
+| `retrieval.ts` | Pure hybrid ranker (`rankChunksHybrid`): BM25-lite lexical (`rankChunks`) fused with dense cosine via Reciprocal Rank Fusion, used by `POST /api/qa` to pick top-k `ModuleChunk`. Lexical-only fallback when no embedding exists. |
 | `metacog.ts` | The plan/monitor/evaluate prompt set (pure data) |
 | `grounding.ts` | Post-generation faithfulness harness (`verifyGrounding`) — checks the synthesized module's citations against the approved source set to flag hallucinated/unsupported claims |
 | `export.ts` | Markdown / Anki / PDF formatters for module export (pure) |
@@ -125,7 +125,7 @@ tests (node environment), `*.dom.test.tsx` next to the component it renders
 | 3. Synthesize module | `POST /api/synthesize` | `gemini.ts`, `mcqHelpers`, `aiusage.ts`, `essay.ts` | blocked until approval |
 | Essay retry | `POST /api/essay` | `essay.ts` (regenerates question only; rubric is harness) | — |
 | 4. Read | `GET /api/modules/[id]` | `prisma` | — |
-| 5. Ask (RAG) | `POST /api/qa` | `retrieval.ts` (`rankChunks`, BM25-lite) over stored `ModuleChunk` + `gemini.ts` | — |
+| 5. Ask (RAG) | `POST /api/qa` | `retrieval.ts` (`rankChunksHybrid`, BM25 + dense cosine RRF) over stored `ModuleChunk` (+ `embedTexts` query embedding) + `gemini.ts` | — |
 | 6. Practise | `POST /api/mcq`, `/api/grade`, `/api/questions` | `mcq.ts`, `gemini.ts` | student authors cards |
 | 7. Record + schedule | `POST /api/attempts` | `scheduler.ts` | — |
 | 8. Review | `GET /api/attempts` | `scheduler.ts` (`isDue`) | — |
@@ -198,8 +198,9 @@ Notes that matter when changing code:
   `JSON.parse` in try/catch and degrades instead of throwing.
 - `QuestionBankItem.author` is an authorisation boundary: `PATCH`/`DELETE` on
   `/api/questions` refuse anything not authored by `student` (403).
-- `ModuleChunk.embedding` is the stub `"[]"` — Q&A now ranks chunks with the
-  lexical BM25 ranker in `src/lib/retrieval.ts`, not embeddings.
+- `ModuleChunk.embedding` now stores a real Gemini `text-embedding-004` vector at
+   synthesis (best-effort; legacy modules keep `"[]"`). Q&A fuses dense cosine with
+   the lexical BM25 ranker (`rankChunksHybrid`) via Reciprocal Rank Fusion.
 - `Course.major` (`String?`) scopes OpenAlex retrieval and synthesis framing per
    discipline; sent as part of the OpenAlex `search` term so English-library results
    still surface for Indonesian course labels (it is **not** added to the relevance
@@ -302,10 +303,12 @@ Tracked with status in ROADMAP §6/§7.6; the architectural ones:
 - **Service worker shipped** — `public/sw.js` + `app/components/ServiceWorkerRegister.tsx`
   provide a hand-rolled offline precache (see ROADMAP §6 / §15); "offline read" no
   longer depends on the browser cache alone.
-- **`ModuleChunk.embedding` is `"[]"`**: the schema still reserves the column, but
-  Q&A retrieval is lexical (BM25-lite in `src/lib/retrieval.ts`), not embeddings.
-  A post-generation **faithfulness harness** (`src/lib/grounding.ts` `verifyGrounding`)
-  nowFlags hallucinated/unsupported citations (ROADMAP §15, gap A).
+- **`ModuleChunk.embedding` is real**: a Gemini `text-embedding-004` vector stored at
+   synthesis (best-effort; legacy modules keep `"[]"`). Q&A retrieval is now **hybrid** —
+   dense cosine fused with BM25-lite (`rankChunksHybrid`) via Reciprocal Rank Fusion, so
+   paraphrase/translation that shares no tokens is still retrieved. Gap B (ROADMAP §15) is closed.
+   A post-generation **faithfulness harness** (`src/lib/grounding.ts` `verifyGrounding`)
+   nowFlags hallucinated/unsupported citations (ROADMAP §15, gap A).
 - **Synthesis is SSE-streamed** — `streamGenerate` in `src/lib/gemini.ts` + the
   `text/event-stream` branch in `app/api/synthesize/route.ts`, with a non-streaming
   JSON fallback so the client still works behind a buffering proxy.
