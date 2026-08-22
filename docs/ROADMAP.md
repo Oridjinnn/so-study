@@ -373,11 +373,11 @@ actual current code (post §7.6), the real remaining gaps are:
 - **Scheduler is SM-2.** Research (FSRS; github.com/open-spaced-repetition/fsrs;
   docs.ankiweb.net/deck-options.html) shows FSRS is the modern standard → replace the
   SM-2 scheduler with a stateful FSRS-derived scheduler.
-- **Q&A "RAG" injects the whole module.** The client posts every paragraph and the
-  server does no retrieval; `ModuleChunk.embedding` is the stub `"[]"` and no embedder
-  exists. → add server-side **lexical** retrieval over stored `ModuleChunk` text (top-k
-  by term overlap) and inject only those. Vector/embedding retrieval is logged as a
-  follow-up that needs an embedder.
+ - **Q&A "RAG" injects the whole module.** *(State as of the 2026-08-18 pass below.)* The client posts every paragraph and the
+   server does no retrieval; `ModuleChunk.embedding` is the stub `"[]"` and no embedder
+   existed at that time. → add server-side **lexical** retrieval over stored `ModuleChunk` text (top-k
+   by term overlap) and inject only those. Vector/embedding retrieval was later added
+   (Gap B, **closed** in §17): Gemini batch embeddings fused with BM25 via RRF.
 - **Interleaved practice rates confidence but never records an attempt** → the SRS is
   not fed by mixed practice.
 - **Modals lack full a11y.** All three overlays (PaperReview, Composer, UsageModal)
@@ -454,8 +454,8 @@ actual current code (post §7.6), the real remaining gaps are:
    streak / mastery; onboarding appears on first run; CI green.
 
 ### Out of scope this pass (deferred, logged)
-- True vector / embedding retrieval (needs an embedder; lexical retrieval shipped as
-  the stopgap).
+ - True vector / embedding retrieval — **later built** (Gap B, **closed** in §17): Gemini dense
+   embeddings fused with BM25 via RRF; lexical remains the best-effort fallback.
 - Full SSE streaming of Gemini responses (delivered error boundaries + better loading
   instead; streaming is higher-risk for a one-shot).
 - Service worker / true offline cache, highlight / notes / bookmark, RPS reconcile UI,
@@ -478,9 +478,9 @@ clean, `vitest run` **160/160 across 12 files**, up from 141/10); `npx prisma mi
 - ✅ **Server-side lexical retrieval for Q&A** — new `src/lib/retrieval.ts` (BM25-lite ranker,
   no new dependency); `app/api/qa/route.ts` accepts `moduleId`, ranks the module's stored
   `ModuleChunk` rows and injects only the top-5. The client no longer ships the whole module.
-  ⚠️ **Vector/embedding retrieval remains deferred** — `ModuleChunk.embedding` is still the stub
-  `"[]"` and no embedder exists; lexical ranking is the stopgap and `rankChunks()` keeps a shape
-  that a vector index can swap into later.
+   ✅ **Dense/semantic retrieval shipped later** (Gap B, **closed** in §17): `embedTexts` in
+   `src/lib/gemini.ts` stores Gemini vectors on `ModuleChunk.embedding` at synthesis and
+   `rankChunksHybrid` fuses them with BM25 via RRF; lexical stays the best-effort fallback.
 - ✅ **Interleaved practice now feeds the SRS** — `InterleavedPractice.tsx` POSTs `/api/attempts`
   per item (moduleId + topicId + isCorrect + confidence, null-guarded, non-fatal), so course-wide
   mixed practice schedules reviews instead of discarding the confidence rating. Interleave tuning
@@ -515,11 +515,11 @@ clean, `vitest run` **160/160 across 12 files**, up from 141/10); `npx prisma mi
   renderer used by both Workspace and InterleavedPractice. Rubric + source-citation note now
   surfaced after grading.
 
-**Still deferred (as already listed in "Out of scope this pass" above):** true vector/embedding
- retrieval (needs an embedder), SSE streaming of Gemini responses, service worker / true offline
- cache, highlight / notes / bookmark, Ollama local-LLM toggle,
- IndexedDB draft migration, deploy (Vercel + Turso), snapshot system,
- and diminishing-cue cloze. RPS reconcile UI (+ model) and multi-course batch import were
+**Still deferred (as already listed in "Out of scope this pass" above):** SSE streaming of Gemini
+ responses, service worker / true offline cache, highlight / notes / bookmark, Ollama local-LLM
+ toggle, IndexedDB draft migration, deploy (Vercel + Turso), snapshot system, and diminishing-cue
+ cloze. *(Vector/embedding retrieval was **closed** in §17 — dense retrieval shipped with Gemini
+ embeddings fused with BM25.)* RPS reconcile UI (+ model) and multi-course batch import were
  **moved out of deferred and built 2026-08-19** (see §6 Phase 1).
 
 ---
@@ -558,7 +558,7 @@ clean, `vitest run` **160/160 across 12 files**, up from 141/10); `npx prisma mi
 
 **Outcomes (executed 2026-08-19).** All 8 workstreams shipped via file-disjoint subagents in 3 waves. Verification: `bash scripts/ci.sh` → `[ci] PASS — 2026-08-18T20:13:30Z`, 205/205 tests, lint 0 problems, `tsc` clean, `npx prisma migrate status` up to date (3 migrations). Shipped: design tokens + dark-mode toggle + responsive Sidebar drawer + complete markdown renderer (WS1); scheduler `desiredRetention`/`previewIntervals` + retrieval NaN guard + qa `take` (WS2); Modal focus/scroll/confirm hardening (WS3); progress streak/heatmap/overdue/mastery fix (WS4); mcq usage logging + course-name pass-through + default-course fix (WS5); ARCHITECTURE drift corrected (WS6); hub fixes — Interleaved crash, ReviewQueue stale correctness, onboarding courseId, topic-only delete, AI-MCQ persistence, dvh, ErrorBoundary-on-modals, aria-live, Latih sub-tablist, unified Again/Hard/Good/Easy grader, pretesting gate, free-recall gate, calibration panel, desirable-difficulty guardrail, interleave-by-concept (WS7); 13 new component test files +21 cases (WS8).
 
-**Deferred (out of scope for this pass).** Vector/embedding retrieval (needs embedder); SSE streaming of Gemini; service worker/offline; highlight→card conversion; RPS reconcile UI; Ollama toggle; deploy.
+**Deferred (out of scope for this pass).** SSE streaming of Gemini; service worker/offline; highlight→card conversion; RPS reconcile UI; Ollama toggle; deploy. *(Vector/embedding retrieval was **closed** in §17 — dense retrieval shipped with Gemini embeddings fused with BM25.)*
   - API route tests (mcq usage, qa take, progress mastery) — skipped in WS8; need Prisma/Gemini mocking harness.
 
 ---
@@ -604,9 +604,10 @@ voice + a daily "belum belajar" nudge, and the UI/UX needs another iPad polish p
 - Soso voice + notification (user: quoted line) → done in-app; cron verified + scaffolded.
 
 **Still deferred (not in this pass):** real push notification channel for the cron (email/Web Push/
-  FCM — needs a server-side delivery service + likely Turso for multi-device); service worker
-  offline refinements; highlight/notes/bookmark; Ollama local-LLM; diminishing-cue cloze; snapshot
-  system; vector/embedding retrieval; SSE streaming.
+   FCM — needs a server-side delivery service + likely Turso for multi-device); service worker
+   offline refinements; highlight/notes/bookmark; Ollama local-LLM; diminishing-cue cloze; snapshot
+   system; SSE streaming. *(Vector/embedding retrieval was **closed** in §17 — Gap B, dense retrieval
+   shipped with Gemini embeddings fused with BM25.)*
 
 ---
 
@@ -650,8 +651,7 @@ deferred").
 
 - **A. Grounding still vulnerable to hallucination** — no post-generation faithfulness check on the
   synthesized module vs the approved source set. **P0.**
-- **B. Retrieval is lexical-only** — `ModuleChunk.embedding` is the stub `"[]"` and ranking is
-  BM25-lite; no dense/semantic retrieval. **Deferred** (needs an embedder + dependency + cost).
+ - **B. Retrieval is now hybrid (lexical + dense)** — `ModuleChunk.embedding` is populated at synthesis by Gemini `text-embedding-004` batch embeddings (`embedTexts` in `src/lib/gemini.ts`) and fused with BM25 via Reciprocal Rank Fusion (`rankChunksHybrid` in `src/lib/retrieval.ts`); lexical-only is the graceful fallback when embedding fails or a legacy module has no vector. **Closed** (see §17 correction #4).
 - **C. Synthesis is not streamed** — a long Gemini call blocks on one JSON response. **Addressed this pass** (SSE).
 - **D. Essay drafts live in `localStorage`, not IndexedDB** — fragile, size-limited. **Addressed this pass** (`draftStore`).
 - **E. No real push notification** — the daily-reminder cron is a guarded no-op; only in-app nudges
@@ -696,7 +696,7 @@ deferred").
 | **P2** | Varied practice | G-rest (error detection, dependency graph, conceptual) | ❌ deferred |
 | **P2** | Reader features | H (highlight→card) | ❌ deferred |
 | **P2** | Efficacy | L (pre/post quiz) | ❌ deferred |
-| **P3** | Sync / deploy | B (semantic retrieval), E (push), I (CRDT), K (Turso) | ❌ deferred |
+| **P3** | Sync / deploy | B (semantic retrieval) — ✅ **closed (§17)**; E (push), I (CRDT), K (Turso) | ❌ deferred (E/I/K); ✅ B done |
 
 ### Workstreams executed this pass
 
@@ -717,7 +717,7 @@ All four workstreams are **file-disjoint** and `bash scripts/ci.sh` is green (**
 
 ### Still deferred (not in this pass)
 
-- **B** — dense/semantic retrieval + embedder (needs a dependency + API cost; lexical BM25 is the stopgap).
+ - **B — dense/semantic retrieval is closed (§17).** Gemini dense embeddings (`embedTexts` in `src/lib/gemini.ts`) are stored on `ModuleChunk.embedding` at synthesis and fused with BM25 via `rankChunksHybrid` (RRF) in `src/lib/retrieval.ts`; lexical BM25 is the best-effort fallback when embedding fails or a legacy module has no vector.
 - **E** — real push notification channel for the daily-reminder cron (Web Push/FCM/email; needs a
   server-side delivery service, likely Turso for multi-device).
 - **G-rest** — error detection, dependency-graph, and conceptual practice modes (free recall already shipped).
@@ -727,10 +727,11 @@ All four workstreams are **file-disjoint** and `bash scripts/ci.sh` is green (**
 - **L** — learning-efficacy measurement (pre/post lecture quiz; see §9 metrics).
 - **UI/UX** — VoiceOver real-device test (still ❌), gamification tuning (keep tied to real practice).
 
-*Reasoning (consistent with prior passes):* each deferred item is either heavy (embedder, CRDT, Turso),
-needs a paid/remote dependency or device (push channel, real iPad), or is a large feature best scoped on
-its own (reader highlight→card, efficacy quiz). The tractable, high-leverage, dependency-free work was
-shipped this pass.
+*Reasoning (consistent with prior passes):* each deferred item is either heavy (CRDT, Turso), needs a
+ paid/remote dependency or device (push channel, real iPad), or is a large feature best scoped on its own
+ (reader highlight→card, efficacy quiz). The tractable, high-leverage, dependency-free work was shipped
+ this pass. *(Gap B — dense/semantic retrieval — is **closed** in §17 and is therefore no longer in this
+ list.)*
 
 ---
 
