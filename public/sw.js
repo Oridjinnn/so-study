@@ -1,42 +1,73 @@
-// Hand-rolled service worker for offline module reading (single-user app: no
+// Hand-rolled service worker for the installed iPad app (single-user app: no
 // next-pwa dependency). Strategy:
-//  - Precache the app shell ("/") on install so the app loads offline at all.
+//  - Precache the app shell ("/") plus the *install contract* assets (the
+//    manifest and its icons) so a Home-Screen launch still opens, and still has
+//    a valid manifest, with no network.
 //  - Navigations: network-first, fall back to the cached shell (so Airplane
 //    Mode still opens the app, not a blank error page).
-//  - Build assets (/_next/static/*) + read-only Module/Topic/Paper records:
-//    cache-first, then background network-update.
-//  - Tanya / Latih / grade / synthesize / retrieve / export: pass through to
-//    the network untouched and NEVER cached, so they fail normally offline and
-//    the existing "Mode offline" banner in Workspace.tsx stays accurate.
+//  - Build assets (/_next/static/*) and the precached public files: cache-first,
+//    then background network-update.
+//  - EVERYTHING under /api/* and /login: passed straight to the network and
+//    NEVER cached. See "Auth safety" below.
 //
-// iOS hardening (see task): service-worker caches are wiped after ~7 days of
-// inactivity, storage is capped near ~50MB, and Background Sync is unavailable.
-// Mitigations below: (1) re-precache the shell on activate, (2) a REPRECACHE
-// message refreshes the shell on every app launch, (3) read-only API responses
-// are FIFO-pruned to a sane cap to respect the storage limit, and (4) a
-// generated offline document guarantees the app still opens after a full wipe.
+// Auth safety (this app is behind a login as of the auth workstream):
+//  - /api/* responses are scoped to a session cookie. Caching them would let
+//    one session's data outlive it, and would let a cached 200 mask a real 401,
+//    so the whole /api/* space is now cache-exempt. That intentionally drops the
+//    old offline module-reading cache; correctness under auth wins.
+//  - /login is never cached, so a login page can never be served stale.
+//  - Only a *non-redirected, basic, status-200* response is ever stored. An
+//    unauthenticated fetch of "/" answers with a redirect to /login, and storing
+//    that under the shell key would pin the login page as the app shell forever.
+//  - An auth redirect is never replaced by the cached shell: the cache is only
+//    consulted when the network *fails* (a rejected fetch), never when the
+//    server answers with a redirect or a 401.
+//  - Navigation requests have redirect mode "manual", so a 3xx arrives here as
+//    an opaqueredirect (status 0, type "opaqueredirect"). It is passed through
+//    untouched, which is what lets the standalone window follow the redirect to
+//    /login while staying inside the manifest scope (i.e. staying standalone
+//    instead of bouncing out to Safari).
+//
+// iOS hardening: service-worker caches are wiped after ~7 days of inactivity,
+// storage is capped near ~50MB, and Background Sync is unavailable. Mitigations:
+// (1) re-precache on activate, (2) a REPRECACHE message refreshes the precache
+// on every app launch, and (3) a generated offline document guarantees the app
+// still opens something after a full wipe.
 
-const CACHE = "so-study-v1";
+// Bumped to v2 when /api/* caching was removed: the activate handler deletes
+// every other cache name, which is what evicts session-scoped JSON already
+// stored on the iPad by v1.
+const CACHE = "so-study-v2";
 const APP_SHELL = "/";
-const MAX_READ_ENTRIES = 200;
-const APP_SHELL_OFFLINE_DOC =
-  "<!DOCTYPE html><html lang='en'><head><meta charset='utf-8'>" +
+
+// The install contract: without a reachable manifest (and its icons) iOS
+// degrades "Add to Home Screen" to a plain Safari bookmark. Precaching these
+// keeps the installed app self-sufficient offline. Bonus: the service worker's
+// own fetch sends the session cookie, while Safari fetches the manifest WITHOUT
+// credentials — so this cache also keeps the manifest resolvable for the
+// installer even though its request is anonymous.
+const PRECACHE = [
+  APP_SHELL,
+  "/manifest.webmanifest",
+  "/icon-192.png",
+  "/icon-512.png",
+  "/icon-maskable-512.png",
+  "/apple-touch-icon.png",
+];
+
+// Path prefixes that must never enter the cache, at all, in any code path.
+// "/api" covers both the AI-backed online-only routes and the read-only record
+// routes: all of them are session-scoped now. "/login" must stay live so the
+// auth state on screen is always the real one.
+const NEVER_CACHE = ["/api", "/login"];
+
+const OFFLINE_DOC =
+  "<!DOCTYPE html><html lang='id'><head><meta charset='utf-8'>" +
   "<meta name='viewport' content='width=device-width,initial-scale=1'>" +
   "<title>Offline</title></head><body style='font-family:system-ui,sans-serif;" +
-  "padding:2rem;color:#333'><h1>Offline</h1>" +
-  "<p>This study app is offline. Reconnect to the internet and reload to keep " +
-  "your saved notes available.</p></body></html>";
-
-// AI-backed, explicitly online-only routes. Do not cache; let them hit the
-// network so the offline banner in the UI reflects reality.
-const ONLINE_ONLY = [
-  "/api/qa",
-  "/api/mcq",
-  "/api/grade",
-  "/api/essay",
-  "/api/synthesize",
-  "/api/retrieve",
-];
+  "padding:2rem;color:#333'><h1>Sedang offline</h1>" +
+  "<p>So-study belum bisa memuat halaman ini karena tidak ada koneksi. " +
+  "Sambungkan internet lalu buka ulang aplikasinya.</p></body></html>";
 
 function sameOrigin(url) {
   return url.origin === self.location.origin;
@@ -44,55 +75,53 @@ function sameOrigin(url) {
 function isStatic(url) {
   return url.pathname.startsWith("/_next/static/");
 }
-function isOnlineOnly(url) {
-  if (url.pathname.includes("/export")) return true; // PDF / Markdown / Anki export
-  return ONLINE_ONLY.some((p) => url.pathname.startsWith(p));
+// Public, non-personalised files we deliberately keep offline.
+function isPrecachedAsset(url) {
+  return url.pathname !== APP_SHELL && PRECACHE.includes(url.pathname);
 }
-// Read-only records that should work offline once loaded.
-function isReadContent(url) {
-  return /\/api\/(modules|topics|papers|courses)\b/.test(url.pathname);
+function isNeverCache(url) {
+  return NEVER_CACHE.some(
+    (prefix) => url.pathname === prefix || url.pathname.startsWith(prefix + "/"),
+  );
 }
 
-// Re-fetch and store the app shell. Safe to call repeatedly (e.g. on launch).
-function precacheShell() {
+// The single gate for writing anything into the cache. `status === 200` rejects
+// 206 partials and errors, `!redirected` rejects a followed auth redirect, and
+// `type === "basic"` rejects opaque / opaqueredirect responses (which `cache.put`
+// would throw on anyway, and which must never stand in for real content).
+function isCacheable(res) {
+  return !!res && res.status === 200 && !res.redirected && res.type === "basic";
+}
+
+function offlineDoc() {
+  return new Response(OFFLINE_DOC, {
+    headers: { "Content-Type": "text/html; charset=utf-8" },
+    status: 200,
+  });
+}
+
+// Re-fetch and store the install contract. Safe to call repeatedly (e.g. on
+// every launch, to outrun the ~7-day iOS cache wipe). Each entry is fetched
+// individually and failures are swallowed, so one unreachable file (or an
+// unauthenticated shell that redirects to /login) never aborts the rest.
+function precache() {
   return caches
     .open(CACHE)
     .then((cache) =>
-      fetch(APP_SHELL)
-        .then((res) => {
-          if (res && res.ok) return cache.put(APP_SHELL, res.clone());
-        })
-        .catch(() => {}),
-    )
-    .catch(() => {});
-}
-
-// FIFO-prune the oldest read-only API responses so the cache stays under the
-// ~50MB iOS limit. cache.keys() yields entries in insertion order, so deleting
-// the head of the list is a reasonable LRU-ish eviction.
-function pruneReadContent(max) {
-  return caches
-    .open(CACHE)
-    .then((cache) =>
-      cache.keys().then((entries) => {
-        const read = entries.filter((req) => {
-          try {
-            return isReadContent(new URL(req.url));
-          } catch {
-            return false;
-          }
-        });
-        if (read.length <= max) return;
-        const stale = read.slice(0, read.length - max);
-        return Promise.all(stale.map((req) => cache.delete(req)));
-      }),
+      Promise.all(
+        PRECACHE.map((path) =>
+          fetch(path)
+            .then((res) => (isCacheable(res) ? cache.put(path, res.clone()) : undefined))
+            .catch(() => {}),
+        ),
+      ),
     )
     .catch(() => {});
 }
 
 self.addEventListener("install", (event) => {
   self.skipWaiting();
-  event.waitUntil(precacheShell());
+  event.waitUntil(precache());
 });
 
 self.addEventListener("activate", (event) => {
@@ -102,7 +131,7 @@ self.addEventListener("activate", (event) => {
       .then((keys) =>
         Promise.all(keys.filter((k) => k !== CACHE).map((k) => caches.delete(k))),
       )
-      .then(precacheShell) // re-seed the shell after a wipe / version bump
+      .then(precache) // re-seed after a wipe / version bump
       .then(() => self.clients.claim()),
   );
 });
@@ -113,7 +142,7 @@ self.addEventListener("message", (event) => {
   const data = event.data;
   if (!data) return;
   if (data.type === "REPRECACHE") {
-    event.waitUntil(precacheShell());
+    event.waitUntil(precache());
   } else if (data.type === "SKIP_WAITING") {
     self.skipWaiting();
   }
@@ -129,46 +158,51 @@ self.addEventListener("fetch", (event) => {
     return;
   }
   if (!sameOrigin(url)) return;
-  // Online-only routes: never cache, just go to the network.
-  if (isOnlineOnly(url)) return;
+
+  // Auth-sensitive URLs: nothing is read from or written to the cache. A
+  // navigation still gets the generated offline page when the network is gone
+  // (never the app shell — showing the logged-in UI at /login would be a lie).
+  if (isNeverCache(url)) {
+    if (req.mode === "navigate") {
+      event.respondWith(fetch(req).catch(() => offlineDoc()));
+    }
+    return;
+  }
 
   // App shell navigation: network-first with cached fallback, and a final
   // generated offline document so the app opens even right after a 7-day wipe.
+  // Redirects and 401s flow through untouched (see "Auth safety" above); only a
+  // genuine network failure reaches the cache.
   if (req.mode === "navigate") {
     event.respondWith(
       fetch(req)
         .then((res) => {
-          const copy = res.clone();
-          caches.open(CACHE).then((c) => c.put(APP_SHELL, copy)).catch(() => {});
+          // Only the shell URL itself may refresh the shell entry, so another
+          // page can never be stored under the "/" key.
+          if (url.pathname === APP_SHELL && isCacheable(res)) {
+            const copy = res.clone();
+            caches
+              .open(CACHE)
+              .then((c) => c.put(APP_SHELL, copy))
+              .catch(() => {});
+          }
           return res;
         })
-        .catch(() =>
-          caches.match(APP_SHELL).then(
-            (r) =>
-              r ||
-              new Response(APP_SHELL_OFFLINE_DOC, {
-                headers: { "Content-Type": "text/html; charset=utf-8" },
-                status: 200,
-              }),
-          ),
-        ),
+        .catch(() => caches.match(APP_SHELL).then((r) => r || offlineDoc())),
     );
     return;
   }
 
-  // Static assets + read-only module content: cache-first, background update.
-  if (isStatic(url) || isReadContent(url)) {
+  // Build assets + the precached public files: cache-first, background update.
+  if (isStatic(url) || isPrecachedAsset(url)) {
     event.respondWith(
       caches.match(req).then((cached) => {
         const network = fetch(req)
           .then((res) => {
-            if (res && res.ok) {
+            if (isCacheable(res)) {
               caches
                 .open(CACHE)
                 .then((c) => c.put(req, res.clone()))
-                .then(() => {
-                  if (isReadContent(url)) pruneReadContent(MAX_READ_ENTRIES);
-                })
                 .catch(() => {});
             }
             return res;
@@ -180,7 +214,8 @@ self.addEventListener("fetch", (event) => {
     return;
   }
 
-  // Everything else (RSC payloads, progress, usage, …): pass through untouched.
+  // Everything else (RSC payloads, other public files, …): pass through
+  // untouched, so nothing personalised is ever stored by accident.
 });
 
 // --- Real iOS web-push notifications ---------------------------------------

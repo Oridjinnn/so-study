@@ -30,16 +30,30 @@ function ShareIcon() {
  * One-time, dismissible iOS install hint. iOS Safari never shows an automatic
  * install prompt, so the only path is manual: Share → Add to Home Screen. We
  * show this only on iOS Safari that is NOT yet running standalone, and we check
- * `navigator.standalone` BEFORE rendering (not just on dismiss) so an installed
+ * the standalone state BEFORE rendering (not just on dismiss) so an installed
  * app never flashes the banner. Dismissal is persisted in localStorage.
  */
+
+/**
+ * Installed-state check. `navigator.standalone` (via the shared helper) is the
+ * legacy iOS-only flag; iPadOS 17+ reports the installed app through the
+ * `display-mode` media query instead, which is also what the manifest's
+ * `display: "standalone"` actually drives. Either one means "already installed",
+ * and missing that would show install steps inside the installed app.
+ */
+function runningStandalone(): boolean {
+  if (isStandalone()) return true;
+  if (typeof window.matchMedia !== "function") return false;
+  return window.matchMedia("(display-mode: standalone)").matches;
+}
+
 export default function InstallGuide() {
   const [show, setShow] = useState(false);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
     // Already installed as a home-screen app → never show.
-    if (isStandalone()) return;
+    if (runningStandalone()) return;
     const ua = window.navigator.userAgent;
     const isIOS =
       /iPad|iPhone|iPod/.test(ua) ||
@@ -77,12 +91,28 @@ export default function InstallGuide() {
           <ShareIcon />
         </span>
         <div className="flex-1">
-          <p className="font-medium">Buka kayak aplikasi</p>
-          <p className="mt-1 leading-relaxed text-muted">
-            Biar kebuka kayak aplikasi, bukan tab browser: tap tombol Share{" "}
-            <ShareIcon /> → scroll ke bawah → pilih &ldquo;Add to Home
-            Screen&rdquo;.
-          </p>
+          <p className="font-medium">Pasang di layar utama iPad</p>
+          {/* Numbered steps, not one sentence: the old copy said "scroll ke
+              bawah" without saying WHERE the Share button is on iPad (top
+              toolbar, not the bottom bar like iPhone), skipped the confirm tap,
+              and never said the app must be opened from the icon afterwards —
+              people ended up with a Safari bookmark and thought it failed. */}
+          <ol className="mt-1 list-decimal space-y-1 pl-5 leading-relaxed text-muted">
+            <li>Buka halaman ini di Safari (browser lain tidak bisa memasang).</li>
+            <li>
+              Tap tombol Share <ShareIcon /> di toolbar kanan atas.
+            </li>
+            <li>
+              Scroll daftarnya, pilih &ldquo;Add to Home Screen&rdquo; (kalau iPad-nya
+              bahasa Indonesia: &ldquo;Tambah ke Layar Utama&rdquo;).
+            </li>
+            <li>Tap &ldquo;Add&rdquo; di kanan atas untuk mengonfirmasi.</li>
+            <li>
+              Mulai sekarang buka lewat ikon So-study di layar utama, bukan dari
+              Safari — tampilannya penuh tanpa address bar, dan kamu tetap login di
+              dalamnya.
+            </li>
+          </ol>
         </div>
         <button
           type="button"

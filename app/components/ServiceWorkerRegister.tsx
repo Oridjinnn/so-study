@@ -56,6 +56,11 @@ export default function ServiceWorkerRegister() {
         });
     };
     window.addEventListener("load", onLoad);
+    // A standalone Home-Screen launch often finishes loading before React
+    // hydrates, so the "load" event can already be in the past by the time this
+    // effect runs — in that case the listener above would never fire and the app
+    // would silently lose its offline cache. Register straight away instead.
+    if (document.readyState === "complete") onLoad();
     return () => window.removeEventListener("load", onLoad);
   }, []);
 
