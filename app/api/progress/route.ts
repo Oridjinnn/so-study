@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/src/lib/prisma";
+import { requireUser, notFoundForUser } from "@/src/lib/tenancy";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -51,21 +52,35 @@ function endOfTodayJakarta(): Date {
 }
 
 export async function GET(req: NextRequest) {
+  const auth = await requireUser(req);
+  if (!auth.ok) return auth.response;
+  const ownerId = auth.userId;
+
   const courseId = req.nextUrl.searchParams.get("courseId");
   if (!courseId) {
     return NextResponse.json({ error: "Query 'courseId' is required." }, { status: 400 });
   }
 
+  // The requested course must be the caller's. This is a CONTRACT CHANGE: an
+  // unknown courseId used to return an empty-but-successful dashboard, and now
+  // returns 404 — the same answer another student's real course id gets, so the
+  // response cannot be used to probe which course ids exist.
+  const course = await prisma.course.findFirst({ where: { id: courseId, ownerId }, select: { id: true } });
+  if (!course) return notFoundForUser("Mata kuliah");
+
   const topics = await prisma.topic.findMany({
-    where: { courseId },
+    where: { courseId, ownerId },
     include: { module: true, attempts: true },
   });
 
   const end = endOfTodayJakarta();
   const start = startOfTodayJakarta();
 
-  // Per-course due-today counts (Sidebar badge) across every course.
+  // Per-course due-today counts (Sidebar badge) across every course THIS student
+  // owns. Unscoped, this loop leaked the other student's course ids (as keys of
+  // `dueTodayByCourse`) and her workload straight into my sidebar.
   const allTopics = await prisma.topic.findMany({
+    where: { ownerId },
     select: { courseId: true, dueBeforeLecture: true },
   });
   const dueTodayByCourse: Record<string, number> = {};

@@ -3,6 +3,7 @@ import { retrieveSources, SourcePaper } from "@/src/lib/sources";
 import { expandKeywords, scoringTerms } from "@/src/lib/keywords";
 import { prisma } from "@/src/lib/prisma";
 import { ensureTopic, resolveCourseMajor } from "@/src/lib/topics";
+import { requireUser } from "@/src/lib/tenancy";
 import {
   GUARD_STATUS,
   LIMITS,
@@ -18,7 +19,18 @@ export const dynamic = "force-dynamic";
 // Stage 1 (whitepaper §4): fetch a candidate paper shortlist from OpenAlex
 // (heuristic + cached, no LLM), persist them as unapproved TopicPapers, and
 // return them for the human review/approval gate before synthesis.
+//
+// Tenancy: retrieval resolves (and persists) the Topic under the CALLER's ownerId
+// — `ensureTopic`/`resolveCourseMajor` are handed `ownerId`, never a bare id. A
+// topicId that belongs to another student is treated as "unknown" by those helpers
+// (they fall back to the caller's own course), so a retrieved paper can never be
+// attached to someone else's topic. The joined `Paper` rows themselves stay
+// global and deduplicated; only the `TopicPaper` join is owned.
 export async function POST(req: NextRequest) {
+  const auth = await requireUser(req);
+  if (!auth.ok) return auth.response;
+  const ownerId = auth.userId;
+
   const bodyTooBig = guardBodyBytes(req.headers.get("content-length"));
   if (bodyTooBig) {
     return NextResponse.json({ error: bodyTooBig.error }, { status: GUARD_STATUS });
@@ -50,8 +62,12 @@ export async function POST(req: NextRequest) {
 
   // The course's jurusan biases WHICH papers come back (see openalex.ts), so it
   // has to be resolved before the query — read-only, so a later retrieval
-  // failure still leaves no Topic behind.
-  const major = await resolveCourseMajor({ courseId: body.courseId, topicId: body.topicId });
+  // failure still leaves no Topic behind. Scoped to the caller via ownerId.
+  const major = await resolveCourseMajor({
+    ownerId,
+    courseId: body.courseId,
+    topicId: body.topicId,
+  });
 
   // Broaden the net: expand the title + user keywords into more search terms
   // (including title bigrams) so providers return a wider, more relevant pool.
@@ -82,8 +98,14 @@ export async function POST(req: NextRequest) {
   // `courseId` anchors the Topic to the course the student picked (the same
   // argument /api/synthesize already forwards). Without it every retrieved topic
   // is filed under the shared default course and never shows up in the course
-  // the student created it in.
-  const topic = await ensureTopic(title, body.topicId, body.courseId);
+  // the student created it in. The Topic is resolved/stamped under this caller's
+  // ownerId, so two students studying the same title get two topics.
+  const topic = await ensureTopic({
+    ownerId,
+    title,
+    topicId: body.topicId,
+    courseId: body.courseId,
+  });
 
   const candidates = [];
   for (const p of raw) {

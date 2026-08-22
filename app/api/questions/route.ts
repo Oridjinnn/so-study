@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/src/lib/prisma";
+import { requireUser, notFoundForUser } from "@/src/lib/tenancy";
 import type { QuestionBankItem } from "@/app/lib/types";
 
 export const runtime = "nodejs";
@@ -40,23 +41,35 @@ function serialize(item: RawQuestionBankItem): QuestionBankItem {
   };
 }
 
-async function findById(id: string) {
-  return prisma.questionBankItem.findUnique({ where: { id } });
+// QuestionBankItem carries no ownerId: it hangs off a Topic, so ownership is
+// expressed through that relation. `findUnique({ where: { id } })` would happily
+// hand over (and then let PATCH/DELETE mutate) another student's item, so the
+// single-row lookup folds the owner in and returns null for anything that is not
+// the caller's — indistinguishable from a non-existent id, by design.
+async function findOwnedById(id: string, ownerId: string) {
+  return prisma.questionBankItem.findFirst({ where: { id, topic: { ownerId } } });
 }
 
 export async function GET(req: NextRequest) {
+  const auth = await requireUser(req);
+  if (!auth.ok) return auth.response;
+  const ownerId = auth.userId;
+
   const topicId = req.nextUrl.searchParams.get("topicId");
   const courseId = req.nextUrl.searchParams.get("courseId");
 
   let items: RawQuestionBankItem[];
   if (courseId) {
+    // Interleaved practice across a course: the course filter is applied THROUGH
+    // the topic together with the owner, so a courseId belonging to someone else
+    // matches nothing instead of pulling her bank into my practice session.
     items = await prisma.questionBankItem.findMany({
-      where: { topic: { courseId } },
+      where: { topic: { courseId, ownerId } },
       orderBy: { createdAt: "asc" },
     });
   } else if (topicId) {
     items = await prisma.questionBankItem.findMany({
-      where: { topicId },
+      where: { topicId, topic: { ownerId } },
       orderBy: { createdAt: "asc" },
     });
   } else {
@@ -77,6 +90,10 @@ export async function GET(req: NextRequest) {
 // practisable/exportable instead of vanishing with the panel — AI items stay
 // read-only (PATCH/DELETE below reject anything not authored by the student).
 export async function POST(req: NextRequest) {
+  const auth = await requireUser(req);
+  if (!auth.ok) return auth.response;
+  const ownerId = auth.userId;
+
   let body: {
     topicId?: string;
     moduleId?: string;
@@ -120,9 +137,27 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  const topic = await prisma.topic.findUnique({ where: { id: topicId } });
-  if (!topic) {
-    return NextResponse.json({ error: "Topic tidak ditemukan." }, { status: 404 });
+  // Verify the parent topic belongs to the caller BEFORE writing: a bank item is
+  // created with a caller-supplied topicId, so an unverified id would let anyone
+  // plant questions inside another student's topic (they surface in her Latih tab
+  // and her interleaved practice). 404 — never 403 — so an id that exists under
+  // the other account is not confirmed to exist at all.
+  const topic = await prisma.topic.findFirst({
+    where: { id: topicId, ownerId },
+    select: { id: true },
+  });
+  if (!topic) return notFoundForUser("Topik");
+
+  // `moduleId` is a plain column (no FK), so nothing else would ever check it.
+  // An unverified value here would be stored as a permanent pointer into another
+  // student's module and travel into exports, so it is proven owned or refused.
+  const moduleId = body.moduleId?.trim() || null;
+  if (moduleId) {
+    const ownModule = await prisma.module.findFirst({
+      where: { id: moduleId, ownerId },
+      select: { id: true },
+    });
+    if (!ownModule) return notFoundForUser("Modul");
   }
 
   const author = body.author?.trim() === "ai" ? "ai" : "student";
@@ -133,7 +168,7 @@ export async function POST(req: NextRequest) {
   // rephrasings are the point of the generation effect.
   if (author === "ai") {
     const duplicate = await prisma.questionBankItem.findFirst({
-      where: { topicId, stem, author: "ai" },
+      where: { topicId, stem, author: "ai", topic: { ownerId } },
     });
     if (duplicate) return NextResponse.json(serialize(duplicate));
   }
@@ -141,7 +176,7 @@ export async function POST(req: NextRequest) {
   const created = await prisma.questionBankItem.create({
     data: {
       topicId,
-      moduleId: body.moduleId?.trim() || null,
+      moduleId,
       stem,
       options: JSON.stringify(options),
       answer,
@@ -154,6 +189,10 @@ export async function POST(req: NextRequest) {
 }
 
 export async function PATCH(req: NextRequest) {
+  const auth = await requireUser(req);
+  if (!auth.ok) return auth.response;
+  const ownerId = auth.userId;
+
   const id = req.nextUrl.searchParams.get("id");
   if (!id) {
     return NextResponse.json({ error: "Query param 'id' is required." }, { status: 400 });
@@ -171,7 +210,7 @@ export async function PATCH(req: NextRequest) {
     return NextResponse.json({ error: "Invalid JSON body." }, { status: 400 });
   }
 
-  const existing = await findById(id);
+  const existing = await findOwnedById(id, ownerId);
   if (!existing) {
     return NextResponse.json({ error: "Item tidak ditemukan." }, { status: 404 });
   }
@@ -224,17 +263,23 @@ export async function PATCH(req: NextRequest) {
     data.explanation = body.explanation.trim() || null;
   }
 
+  // Safe to key the write on the id alone: the row above was fetched through the
+  // owner-scoped lookup, so it is already proven to be this student's.
   const updated = await prisma.questionBankItem.update({ where: { id }, data });
   return NextResponse.json(serialize(updated));
 }
 
 export async function DELETE(req: NextRequest) {
+  const auth = await requireUser(req);
+  if (!auth.ok) return auth.response;
+  const ownerId = auth.userId;
+
   const id = req.nextUrl.searchParams.get("id");
   if (!id) {
     return NextResponse.json({ error: "Query param 'id' is required." }, { status: 400 });
   }
 
-  const existing = await findById(id);
+  const existing = await findOwnedById(id, ownerId);
   if (!existing) {
     return NextResponse.json({ error: "Item tidak ditemukan." }, { status: 404 });
   }

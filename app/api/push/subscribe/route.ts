@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { prisma } from "@/src/lib/prisma";
+import { requireUser } from "@/src/lib/tenancy";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -16,7 +17,16 @@ const subscribeSchema = z.object({
   studentName: z.string().trim().max(120).optional(),
 });
 
+// Unlike its sibling `push/send`, this IS a browser call from the installed PWA,
+// so it carries the session cookie and must be authenticated: the subscription
+// decides WHOSE nudges a device receives, so accepting it anonymously would let
+// anyone register an endpoint that then gets another student's reminder — or,
+// worse, silently re-point an existing device at the wrong person.
 export async function POST(req: NextRequest) {
+  const auth = await requireUser(req);
+  if (!auth.ok) return auth.response;
+  const userId = auth.userId;
+
   let body: unknown;
   try {
     body = await req.json();
@@ -31,19 +41,25 @@ export async function POST(req: NextRequest) {
 
   const { endpoint, keys, studentName } = parsed.data;
 
-  // Re-subscribing just rotates the keys — upsert on the unique endpoint.
+  // Re-subscribing just rotates the keys — upsert on the globally unique
+  // endpoint (it identifies one browser push context, so it stays the natural
+  // key). `userId` is written on UPDATE as well as CREATE on purpose: on a shared
+  // iPad, whoever is logged in when the endpoint is re-registered is the person
+  // that device now belongs to, and leaving a stale owner would keep delivering
+  // the previous student's "kamu belum belajar" nudge to the new one.
   await prisma.pushSubscription.upsert({
     where: { endpoint },
-    create: { endpoint, p256dh: keys.p256dh, auth: keys.auth },
-    update: { p256dh: keys.p256dh, auth: keys.auth },
+    create: { endpoint, userId, p256dh: keys.p256dh, auth: keys.auth },
+    update: { userId, p256dh: keys.p256dh, auth: keys.auth },
   });
 
-  // Persist the student name (single-user settings singleton) when provided, so
-  // the server-side push copy can personalize. Never overwrites with empty.
+  // Persist the student name in THIS user's settings row (Settings is keyed by
+  // userId now — there is no "singleton" row any more), so the server-side push
+  // copy personalizes the right person. Never overwrites with empty.
   const name = studentName && studentName.length > 0 ? studentName : undefined;
   await prisma.settings.upsert({
-    where: { id: "singleton" },
-    create: { id: "singleton", studentName: name },
+    where: { userId },
+    create: { userId, studentName: name },
     update: name ? { studentName: name } : {},
   });
 

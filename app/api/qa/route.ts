@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { embedTexts, generate } from "@/src/lib/gemini";
 import { logAIUsage, assertBudget } from "@/src/lib/aiusage";
 import { prisma } from "@/src/lib/prisma";
+import { requireUser, notFoundForUser } from "@/src/lib/tenancy";
 import { rankChunks, rankChunksHybrid, type RankableChunk } from "@/src/lib/retrieval";
 import {
   GUARD_STATUS,
@@ -26,6 +27,13 @@ Jangan mengarang jawaban di luar sumber.`;
 const RETRIEVE_K = 5;
 
 export async function POST(req: NextRequest) {
+  // Auth FIRST — before the body-size guard, before any DB read and well before
+  // the budget probe. An anonymous caller must not be able to learn whether the
+  // shared Gemini budget is exhausted, nor cost us a query to find out.
+  const auth = await requireUser(req);
+  if (!auth.ok) return auth.response;
+  const ownerId = auth.userId;
+
   const bodyTooBig = guardBodyBytes(req.headers.get("content-length"));
   if (bodyTooBig) {
     return NextResponse.json({ error: bodyTooBig.error }, { status: GUARD_STATUS });
@@ -43,6 +51,28 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Field 'question' is required." }, { status: 400 });
   }
 
+  // Authorize the ids the caller supplied before they can steer a paid call.
+  // CONTRACT CHANGE: a moduleId/topicId that is not the caller's (including one
+  // that does not exist) is now a 404 instead of silently degrading to an
+  // answer with no context. Two reasons: asking questions ABOUT another
+  // student's module must be impossible, and `logAIUsage` below stamps the
+  // topicId onto a cost row — an unverified id would attribute my spend to her
+  // topic in the shared "Biaya AI" ledger.
+  if (body.moduleId) {
+    const ownModule = await prisma.module.findFirst({
+      where: { id: body.moduleId, ownerId },
+      select: { id: true },
+    });
+    if (!ownModule) return notFoundForUser("Modul");
+  }
+  if (body.topicId) {
+    const ownTopic = await prisma.topic.findFirst({
+      where: { id: body.topicId, ownerId },
+      select: { id: true },
+    });
+    if (!ownTopic) return notFoundForUser("Topik");
+  }
+
   // Cost gate (workstream C): never spend a Gemini call past the hard budget cap.
   // Must run BEFORE the first paid call, which here is embedTexts() during RAG
   // retrieval — so it sits above the moduleId branch, not below the field guards.
@@ -58,8 +88,10 @@ export async function POST(req: NextRequest) {
   const legacyChunks = Array.isArray(body.chunks) ? body.chunks : [];
 
   if (body.moduleId) {
+    // Scoped through the module relation (ModuleChunk has no owner of its own),
+    // so even a module id that slipped past the check above cannot leak text.
     const rows = await prisma.moduleChunk.findMany({
-      where: { moduleId: body.moduleId },
+      where: { moduleId: body.moduleId, module: { ownerId } },
       select: { id: true, text: true, embedding: true },
       take: LIMITS.chunkCount,
     });

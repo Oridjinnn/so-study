@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { Prisma } from "@prisma/client";
 import { prisma } from "@/src/lib/prisma";
+import { requireUser } from "@/src/lib/tenancy";
 import {
   GUARD_STATUS,
   LIMITS,
@@ -21,8 +22,12 @@ const STATUS: Record<string, string> = {
   ready: "ready",
 };
 
-async function listCourses() {
+async function listCourses(ownerId: string) {
+  // FOLD the owner into the read: a course that is not the caller's simply never
+  // appears, so the "two students share a course list" bug is structurally
+  // impossible rather than a thing the code must remember to check.
   const courses = await prisma.course.findMany({
+    where: { ownerId },
     orderBy: { name: "asc" },
     include: {
       modules: {
@@ -64,8 +69,12 @@ async function listCourses() {
   }));
 }
 
-export async function GET() {
-  const courses = await listCourses();
+export async function GET(req: Request) {
+  const auth = await requireUser(req);
+  if (!auth.ok) return auth.response;
+  const ownerId = auth.userId;
+
+  const courses = await listCourses(ownerId);
   return NextResponse.json({ courses });
 }
 
@@ -128,6 +137,10 @@ export function normalizeCourseNames(raw: unknown[]): { names: string[]; duplica
  * added afterwards through the compose → retrieve flow.
  */
 export async function POST(req: NextRequest) {
+  const auth = await requireUser(req);
+  if (!auth.ok) return auth.response;
+  const ownerId = auth.userId;
+
   const bodyTooBig = guardBodyBytes(req.headers.get("content-length"));
   if (bodyTooBig) {
     return NextResponse.json({ error: bodyTooBig.error }, { status: GUARD_STATUS });
@@ -161,9 +174,12 @@ export async function POST(req: NextRequest) {
     }
 
     // Surface collisions as a precise 409 instead of letting the unique index
-    // raise a generic 500 the student cannot act on.
+    // raise a generic 500 the student cannot act on. The collision is PER OWNER:
+    // a name my girlfriend already has is not my collision, so we fold ownerId
+    // into the lookup and only block a name I already own (see schema
+    // @@unique([ownerId, name])). Another student's course stays invisible here.
     const existing = await prisma.course.findMany({
-      where: { name: { in: names } },
+      where: { ownerId, name: { in: names } },
       select: { name: true },
     });
     if (existing.length > 0) {
@@ -183,7 +199,10 @@ export async function POST(req: NextRequest) {
       const created = await prisma.$transaction(
         names.map((name) =>
           prisma.course.create({
-            data: { name, ...(major ? { major } : {}) },
+            // Every Course a student creates is stamped with their ownerId — there
+            // is no shared course row, so a created course can never leak across
+            // accounts.
+            data: { name, ownerId, ...(major ? { major } : {}) },
             select: { id: true, name: true, major: true },
           }),
         ),
@@ -224,13 +243,17 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: nameTooLong.error }, { status: GUARD_STATUS });
   }
 
-  const existing = await prisma.course.findUnique({ where: { name } });
+  // Owner-scoped read: a name my girlfriend owns is not "my" course, so the
+  // findUnique-by-name (which was global) is replaced by findFirst-by-name+owner.
+  // The upsert keys off the compound (ownerId, name) unique now — that is the row
+  // that matters for THIS student, not the global name.
+  const existing = await prisma.course.findFirst({ where: { name, ownerId } });
   const course = await prisma.course.upsert({
-    where: { name },
+    where: { ownerId_name: { ownerId, name } },
     // Only backfill a missing major; an existing one is the student's earlier
     // answer and is not overwritten by a later create-if-absent call.
     update: major && !existing?.major ? { major } : {},
-    create: { name, ...(major ? { major } : {}) },
+    create: { name, ownerId, ...(major ? { major } : {}) },
   });
   return NextResponse.json({ id: course.id, name: course.name, major: course.major });
 }

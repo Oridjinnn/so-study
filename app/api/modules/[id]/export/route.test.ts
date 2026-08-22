@@ -3,7 +3,7 @@ import { PDFParse } from "pdf-parse";
 
 vi.mock("@/src/lib/prisma", () => ({
   prisma: {
-    module: { findUnique: vi.fn() },
+    module: { findFirst: vi.fn() },
     paper: { findMany: vi.fn() },
     questionBankItem: { findMany: vi.fn() },
   },
@@ -12,17 +12,32 @@ vi.mock("@/src/lib/prisma", () => ({
 import { NextRequest } from "next/server";
 import { GET } from "./route";
 import { prisma } from "@/src/lib/prisma";
+import { OTHER_USER_ID, TEST_USER_ID, sessionCookie } from "@/src/lib/testAuth";
 
-const moduleMock = prisma.module as unknown as { findUnique: ReturnType<typeof vi.fn> };
+const moduleMock = prisma.module as unknown as { findFirst: ReturnType<typeof vi.fn> };
 const paperMock = prisma.paper as unknown as { findMany: ReturnType<typeof vi.fn> };
+const bankMock = prisma.questionBankItem as unknown as { findMany: ReturnType<typeof vi.fn> };
 
-function makeReq(format: string | null) {
+/**
+ * A real, correctly-signed session cookie on a real NextRequest — the route reads
+ * `nextUrl.searchParams`, so it must stay a NextRequest, and the cookie must go
+ * through the same verification production uses (src/lib/testAuth.ts).
+ */
+async function makeReq(format: string | null, userId: string = TEST_USER_ID) {
   const url = `http://localhost/api/modules/1/export${format ? `?format=${format}` : ""}`;
-  return new NextRequest(url);
+  return new NextRequest(url, { headers: { cookie: await sessionCookie(userId) } });
 }
+
+/** Same URL with no cookie at all — the 401 case. */
+function anonReq(format: string) {
+  return new NextRequest(`http://localhost/api/modules/1/export?format=${format}`);
+}
+
+const ctx = (id: string) => ({ params: Promise.resolve({ id }) });
 
 const moduleFixture = {
   id: "1",
+  ownerId: TEST_USER_ID,
   topicId: "t1",
   topic: { title: "Teori Praktik Bourdieu" },
   courses: [{ course: { name: "Antropologi" } }],
@@ -45,15 +60,22 @@ const paperFixture = [
 ];
 
 beforeEach(() => {
-  moduleMock.findUnique.mockReset();
+  moduleMock.findFirst.mockReset();
   paperMock.findMany.mockReset();
-  moduleMock.findUnique.mockResolvedValue(moduleFixture);
+  bankMock.findMany.mockReset();
+  // Fake table: the module is only visible to its owner, so a request signed as
+  // the other student gets null exactly as Postgres would.
+  moduleMock.findFirst.mockImplementation(
+    async ({ where }: { where: { id: string; ownerId: string } }) =>
+      where.ownerId === moduleFixture.ownerId ? moduleFixture : null,
+  );
   paperMock.findMany.mockResolvedValue(paperFixture);
+  bankMock.findMany.mockResolvedValue([]);
 });
 
 describe("GET /api/modules/[id]/export?format=pdf", () => {
   it("returns a real PDF with the right headers", async () => {
-    const res = await GET(makeReq("pdf"), { params: Promise.resolve({ id: "1" }) });
+    const res = await GET(await makeReq("pdf"), ctx("1"));
 
     expect(res.status).toBe(200);
     expect(res.headers.get("Content-Type")).toBe("application/pdf");
@@ -66,7 +88,7 @@ describe("GET /api/modules/[id]/export?format=pdf", () => {
   });
 
   it("still carries the inline citation and the grounding source in the PDF", async () => {
-    const res = await GET(makeReq("pdf"), { params: Promise.resolve({ id: "1" }) });
+    const res = await GET(await makeReq("pdf"), ctx("1"));
     const buf = Buffer.from(await res.arrayBuffer());
 
     // pdfmake compresses its streams, so the literal text isn't in the raw
@@ -81,7 +103,7 @@ describe("GET /api/modules/[id]/export?format=pdf", () => {
   }, 30000);
 
   it("renders the derived study-guidance block (Petunjuk belajar) near the top", async () => {
-    const res = await GET(makeReq("pdf"), { params: Promise.resolve({ id: "1" }) });
+    const res = await GET(await makeReq("pdf"), ctx("1"));
     const buf = Buffer.from(await res.arrayBuffer());
     const parser = new PDFParse({ data: buf });
     const { text } = await parser.getText();
@@ -113,8 +135,8 @@ describe("GET /api/modules/[id]/export?format=pdf rubric", () => {
   };
 
   it("renders the rubric as a structured checklist (penulisan/penafsiran/penalaran)", async () => {
-    moduleMock.findUnique.mockResolvedValue(rubricModule);
-    const res = await GET(makeReq("pdf"), { params: Promise.resolve({ id: "1" }) });
+    moduleMock.findFirst.mockResolvedValue(rubricModule);
+    const res = await GET(await makeReq("pdf"), ctx("1"));
     const buf = Buffer.from(await res.arrayBuffer());
     const parser = new PDFParse({ data: buf });
     const { text } = await parser.getText();
@@ -130,13 +152,46 @@ describe("GET /api/modules/[id]/export?format=pdf rubric", () => {
 
 describe("GET /api/modules/[id]/export format validation", () => {
   it("rejects an unknown format with 400", async () => {
-    const res = await GET(makeReq("docx"), { params: Promise.resolve({ id: "1" }) });
+    const res = await GET(await makeReq("docx"), ctx("1"));
     expect(res.status).toBe(400);
   });
 
   it("returns 404 when the module does not exist", async () => {
-    moduleMock.findUnique.mockResolvedValue(null);
-    const res = await GET(makeReq("pdf"), { params: Promise.resolve({ id: "nope" }) });
+    moduleMock.findFirst.mockResolvedValue(null);
+    const res = await GET(await makeReq("pdf"), ctx("nope"));
     expect(res.status).toBe(404);
+  });
+});
+
+describe("GET /api/modules/[id]/export tenancy", () => {
+  it("401s an anonymous download before any query — a file leak is silent", async () => {
+    const res = await GET(anonReq("md"), ctx("1"));
+    expect(res.status).toBe(401);
+    expect(moduleMock.findFirst).not.toHaveBeenCalled();
+  });
+
+  it("scopes the module read by ownerId (not findUnique by id)", async () => {
+    const res = await GET(await makeReq("md"), ctx("1"));
+    expect(res.status).toBe(200);
+    expect(moduleMock.findFirst).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { id: "1", ownerId: TEST_USER_ID } }),
+    );
+  });
+
+  it("404s another student's module and exports nothing", async () => {
+    const res = await GET(await makeReq("md", OTHER_USER_ID), ctx("1"));
+    expect(res.status).toBe(404);
+    await expect(res.json()).resolves.toEqual({ error: "Modul tidak ditemukan." });
+    // No content-disposition, no question bank read: the export never started.
+    expect(res.headers.get("Content-Disposition")).toBeNull();
+    expect(bankMock.findMany).not.toHaveBeenCalled();
+  });
+
+  it("scopes the Anki question bank through its topic's owner", async () => {
+    const res = await GET(await makeReq("anki"), ctx("1"));
+    expect(res.status).toBe(200);
+    expect(bankMock.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { topicId: "t1", topic: { ownerId: TEST_USER_ID } } }),
+    );
   });
 });

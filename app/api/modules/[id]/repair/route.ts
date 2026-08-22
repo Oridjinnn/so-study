@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { generate } from "@/src/lib/gemini";
 import { logAIUsage, assertBudget } from "@/src/lib/aiusage";
 import { prisma } from "@/src/lib/prisma";
+import { notFoundForUser, requireUser } from "@/src/lib/tenancy";
 import { mcqHelpers } from "@/src/lib/mcq";
 import { countWords, estimatePagesFromWords } from "@/src/lib/pages";
 import { loadModuleForVerification } from "@/src/lib/moduleSources";
@@ -33,13 +34,22 @@ export const dynamic = "force-dynamic";
  *   2. Budget spent (`repairAttempts >= MAX_REPAIR_ATTEMPTS`) → 200 with
  *      `manualReviewNeeded: true`. Two targeted passes could not fix it, so the
  *      honest answer is "tinjau manual", not another loop.
- *   3. Missing module → 404.
+ *   3. Missing module — or a module that is not the caller's → 404.
  *
  * On success the new content is persisted as a NEW ModuleVersion (never a blind
  * overwrite), with chunks/excerpts and both reports refreshed to describe the
  * text that now ships.
+ *
+ * Gate order matches verify/route.ts: session, then the free body-size guard,
+ * then the AI budget, then ownership — every gate ahead of the cost it prevents,
+ * and the session ahead of all of them so an anonymous caller cannot even learn
+ * whether the budget is spent.
  */
-export async function POST(req: Request, { params }: { params: Promise<{ id: string }> }) {
+export async function POST(req: Request, ctx: RouteContext<"/api/modules/[id]/repair">) {
+  const auth = await requireUser(req);
+  if (!auth.ok) return auth.response;
+  const ownerId = auth.userId;
+
   const bodyTooBig = guardBodyBytes(req.headers.get("content-length"));
   if (bodyTooBig) {
     return NextResponse.json({ error: bodyTooBig.error }, { status: GUARD_STATUS });
@@ -53,11 +63,16 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     return NextResponse.json({ error: (e as Error).message }, { status: 429 });
   }
 
-  const { id } = await params;
+  const { id } = await ctx.params;
+  // Owner-scoped probe before the shared loader (which resolves by id alone and
+  // lives in another workstream's file): a module id belonging to the other
+  // student never reaches the loader, never reaches runTargetedRepair, and is
+  // answered with the same 404 as an id that does not exist at all.
+  const owned = await prisma.module.findFirst({ where: { id, ownerId }, select: { id: true } });
+  if (!owned) return notFoundForUser("Modul");
+
   const mod = await loadModuleForVerification(id);
-  if (!mod) {
-    return NextResponse.json({ error: "Modul tidak ditemukan." }, { status: 404 });
-  }
+  if (!mod) return notFoundForUser("Modul");
 
   // Tier 1 is re-run rather than read from cache: it is free, and the cache may
   // predate an edit or a change in which papers are approved.
@@ -122,7 +137,14 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     const wordCount = countWords(result.markdown);
     const chunks = mcqHelpers.chunkText(result.markdown, 800);
     const claims = mod.paperIds.length ? mcqHelpers.extractClaims(result.markdown) : [];
-    const versionNo = (await prisma.moduleVersion.count({ where: { moduleId: mod.id } })) + 1;
+    const versionNo =
+      (await prisma.moduleVersion.count({
+        // ModuleVersion carries no owner: it is scoped through its Module, the
+        // only path by which it is reachable. Same for the chunk/excerpt deletes
+        // below — a stray `moduleId` alone would be a cross-tenant delete.
+        where: { moduleId: mod.id, module: { ownerId } },
+      })) + 1;
+
     const excerptData = claims
       .filter((c) => c.paperIndex != null && mod.paperIds[c.paperIndex - 1])
       .map((c) => ({
@@ -133,12 +155,14 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       }));
 
     // One transaction: chunks/excerpts must never describe a different revision
-    // of the text than `contentMarkdown` does.
+    // of the text than `contentMarkdown` does. Every statement in it is
+    // owner-scoped, so the transaction as a whole cannot touch another student's
+    // module even if `mod.id` were somehow wrong.
     await prisma.$transaction([
-      prisma.moduleChunk.deleteMany({ where: { moduleId: mod.id } }),
-      prisma.excerpt.deleteMany({ where: { moduleId: mod.id } }),
+      prisma.moduleChunk.deleteMany({ where: { moduleId: mod.id, module: { ownerId } } }),
+      prisma.excerpt.deleteMany({ where: { moduleId: mod.id, module: { ownerId } } }),
       prisma.module.update({
-        where: { id: mod.id },
+        where: { id: mod.id, ownerId },
         data: {
           contentMarkdown: result.markdown,
           wordCount,
@@ -164,7 +188,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     // failed). Still record the spent attempt + the fresh reports: pretending no
     // attempt happened is how a budget stops bounding anything.
     await prisma.module.update({
-      where: { id: mod.id },
+      where: { id: mod.id, ownerId },
       data: {
         verifyReport: JSON.stringify(result.tier1),
         criticReport: result.critic ? JSON.stringify(result.critic) : null,

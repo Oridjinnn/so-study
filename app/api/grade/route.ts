@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { generate } from "@/src/lib/gemini";
 import { logAIUsage, assertBudget } from "@/src/lib/aiusage";
 import { prisma } from "@/src/lib/prisma";
+import { requireUser, notFoundForUser } from "@/src/lib/tenancy";
 import {
   GUARD_STATUS,
   LIMITS,
@@ -23,6 +24,12 @@ Jangan sekadar memberi angka; jelaskan kekuatan dan kelemahan jawaban.`;
 }
 
 export async function POST(req: NextRequest) {
+  // Auth FIRST: everything below either reads the database, probes the shared
+  // budget, or spends a Gemini call on the shared key.
+  const auth = await requireUser(req);
+  if (!auth.ok) return auth.response;
+  const ownerId = auth.userId;
+
   const bodyTooBig = guardBodyBytes(req.headers.get("content-length"));
   if (bodyTooBig) {
     return NextResponse.json({ error: bodyTooBig.error }, { status: GUARD_STATUS });
@@ -41,15 +48,20 @@ export async function POST(req: NextRequest) {
   }
   const rubric = body.rubric ?? "(tidak ada rubrik eksplisit)";
 
-  // Resolve the real course name for the prompt (falls back to generic if the
-  // topic/course cannot be found).
+  // Resolve the real course name for the prompt — owner-scoped, because
+  // `Course.name` is the other student's data: a `findUnique` by topic id would
+  // have echoed her course name back in the graded feedback. CONTRACT CHANGE: a
+  // topicId that is not the caller's (or does not exist) is now 404 instead of
+  // quietly falling back to the generic course name; the topicId is also stamped
+  // onto the AIUsage cost row, which must never point at another student's topic.
   let courseName = "mata kuliah ini";
   if (body.topicId) {
-    const topic = await prisma.topic.findUnique({
-      where: { id: body.topicId },
+    const topic = await prisma.topic.findFirst({
+      where: { id: body.topicId, ownerId },
       include: { course: true },
     });
-    if (topic?.course?.name) courseName = topic.course.name;
+    if (!topic) return notFoundForUser("Topik");
+    if (topic.course?.name) courseName = topic.course.name;
   }
 
   // Bound the prompt before spending a Gemini call (I7/I8, mitigates R4).

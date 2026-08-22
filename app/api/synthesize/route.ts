@@ -3,6 +3,7 @@ import { embedTexts, generate, streamGenerate, type GeminiResult, type GeminiUsa
 import { logAIUsage, assertBudget } from "@/src/lib/aiusage";
 import { SourcePaper } from "@/src/lib/sources";
 import { prisma } from "@/src/lib/prisma";
+import { requireUser } from "@/src/lib/tenancy";
 import { ensureTopic } from "@/src/lib/topics";
 import { mcqHelpers } from "@/src/lib/mcq";
 import { generateEssayPromptWithFallback, buildEssayRubric } from "@/src/lib/essay";
@@ -185,6 +186,15 @@ function sseFrame(event: string | null, data: unknown): string {
 }
 
 export async function POST(req: NextRequest) {
+  // Session FIRST, ahead of every guard, the budget query and the Gemini call.
+  // This is the most expensive route in the app: an unauthenticated caller must
+  // not be able to spend the shared key, and must not even be able to learn from
+  // a 429-vs-200 whether the daily budget is still open. It also means an
+  // anonymous request costs exactly zero database queries.
+  const auth = await requireUser(req);
+  if (!auth.ok) return auth.response;
+  const ownerId = auth.userId;
+
   const bodyTooBig = guardBodyBytes(req.headers.get("content-length"));
   if (bodyTooBig) {
     return NextResponse.json({ error: bodyTooBig.error }, { status: GUARD_STATUS });
@@ -220,8 +230,15 @@ export async function POST(req: NextRequest) {
   let papers: SourcePaper[];
   if (body.topicId) {
     // Gated path: only papers the human approved are used as sources.
+    //
+    // TopicPaper has no owner column of its own, so the caller is folded in
+    // through the relation (`topic: { ownerId }`) — one query, no extra "is this
+    // topic mine?" round-trip. A topicId belonging to the other student matches
+    // nothing and therefore lands on the SAME 400 as a topic with nothing
+    // approved yet: we never confirm that the id exists, and we never synthesize
+    // (or bill) from her approved papers.
     const approved = await prisma.topicPaper.findMany({
-      where: { topicId: body.topicId, approved: true },
+      where: { topicId: body.topicId, approved: true, topic: { ownerId } },
       include: { paper: true },
     });
     if (approved.length === 0) {
@@ -283,13 +300,19 @@ export async function POST(req: NextRequest) {
     `Berikut adalah paper yang disetujui (GUNAKAN HANYA teks di antara penanda PAPER n START/END sebagai satu-satunya sumber, jangan gunakan pengetahuan lain):\n\n${corpus}\n\n` +
     `Susun modul belajar lengkap sesuai struktur yang diminta.`;
 
-  const topic = await ensureTopic(title, body.topicId, body.courseId);
+  // ensureTopic is owner-scoped (src/lib/topics.ts): a topicId or courseId that is
+  // not the caller's is treated exactly like an unknown one — it falls back to
+  // THEIR default course instead of throwing, because a 500 here would abort a
+  // synthesis the student has already paid a Gemini call for.
+  const topic = await ensureTopic({ ownerId, title, topicId: body.topicId, courseId: body.courseId });
 
   // Resolve the real course name + jurusan for the prompt (falls back to
-  // generic/no-lens if the course cannot be found).
+  // generic/no-lens if the course cannot be found). findFirst with the owner
+  // folded in, not findUnique: the disciplinary lens is derived from the
+  // student's OWN course or from nothing at all.
   let courseName = "mata kuliah ini";
   let major: string | undefined;
-  const course = await prisma.course.findUnique({ where: { id: topic.courseId } });
+  const course = await prisma.course.findFirst({ where: { id: topic.courseId, ownerId } });
   if (course?.name) courseName = course.name;
   if (course?.major) major = course.major;
 
@@ -386,6 +409,11 @@ export async function POST(req: NextRequest) {
     const sources: GroundingSource[] = [];
     for (const p of papers) {
       if (!p.sourceUrl) continue;
+      // Paper is GLOBAL and deliberately deduplicated across users: it is public
+      // bibliographic metadata keyed by `sourceUrl`, holds nothing private, and
+      // two students studying the same field SHOULD share the row. So the upsert
+      // stays unscoped and tenancy lives in the join (TopicPaper) below, whose
+      // topic is the caller's own.
       const paper = await prisma.paper.upsert({
         where: { sourceUrl: p.sourceUrl },
         update: {
@@ -494,14 +522,27 @@ export async function POST(req: NextRequest) {
 
     // Stage 2 persistence: one Module per Topic. Re-synthesis appends a new
     // ModuleVersion (never blind overwrite) and refreshes chunks/excerpts.
-    const existing = await prisma.module.findUnique({ where: { topicId: topic.id } });
+    // `topic` is already the caller's row, but the owner is folded into this read
+    // too: `topicId` is unique on Module, so findUnique would have worked — and
+    // that is exactly how an unscoped query survives a refactor of the code above
+    // it.
+    const existing = await prisma.module.findFirst({ where: { topicId: topic.id, ownerId } });
     const versionNo = existing
-      ? (await prisma.moduleVersion.count({ where: { moduleId: existing.id } })) + 1
+      ? (await prisma.moduleVersion.count({
+          // Scoped through the parent module: ModuleVersion has no owner column.
+          where: { moduleId: existing.id, module: { ownerId } },
+        })) + 1
       : 1;
 
     const moduleData = {
       topicId: topic.id,
+      // Every Module is stamped with its owner at creation (schema: Module.ownerId
+      // is required). Re-writing the same owner on an update is a no-op that keeps
+      // the invariant "a module always has an owner" true in one place instead of
+      // two divergent code paths.
+      ownerId,
       contentMarkdown: synthesisText,
+
       sourcePaperIds: JSON.stringify(paperIds),
       essayPrompt,
       essayRubric,
@@ -547,12 +588,15 @@ export async function POST(req: NextRequest) {
     if (existing) {
       // Refresh is atomic: delete old chunks/excerpts and write the new module
       // + version + chunks + excerpts in one transaction, so a failure mid-way
-      // never leaves a module with stale chunks and no excerpts.
+      // never leaves a module with stale chunks and no excerpts. Every statement
+      // carries the owner (chunks/excerpts through their parent module, the
+      // update alongside its unique id), so the whole transaction is confined to
+      // the caller's rows.
       await prisma.$transaction([
-        prisma.moduleChunk.deleteMany({ where: { moduleId: existing.id } }),
-        prisma.excerpt.deleteMany({ where: { moduleId: existing.id } }),
+        prisma.moduleChunk.deleteMany({ where: { moduleId: existing.id, module: { ownerId } } }),
+        prisma.excerpt.deleteMany({ where: { moduleId: existing.id, module: { ownerId } } }),
         prisma.module.update({
-          where: { id: existing.id },
+          where: { id: existing.id, ownerId },
           data: {
             ...moduleData,
             versions: {
@@ -583,7 +627,22 @@ export async function POST(req: NextRequest) {
         (c): c is string => Boolean(c),
       )),
     );
-    for (const cid of linkCourseIds) {
+    // Course ids come from the request body, so they are resolved inside the
+    // caller's courses before any join row is written: without this, a synthesis
+    // could file this module under the other student's matakuliah (and her course
+    // list would grow a module she never made). Foreign/unknown ids are dropped
+    // SILENTLY rather than 4xx'd — the module is already persisted and paid for at
+    // this point, so failing the whole request over a bad link would be the more
+    // destructive answer. Same reasoning as resolveCourse in src/lib/topics.ts.
+    const ownedCourseIds = linkCourseIds.length
+      ? (
+          await prisma.course.findMany({
+            where: { id: { in: linkCourseIds }, ownerId },
+            select: { id: true },
+          })
+        ).map((c) => c.id)
+      : [];
+    for (const cid of ownedCourseIds) {
       await prisma.courseModule.upsert({
         where: { courseId_moduleId: { courseId: cid, moduleId } },
         update: {},
@@ -593,9 +652,11 @@ export async function POST(req: NextRequest) {
 
     // Mark the topic as having a generated module so the dashboard reflects
     // real engagement (module exists) rather than just fetched papers.
+    // updateMany, so the owner is part of the write's predicate: `update` needs a
+    // unique where and would have had to trust the id alone.
     try {
-      await prisma.topic.update({
-        where: { id: topic.id },
+      await prisma.topic.updateMany({
+        where: { id: topic.id, ownerId },
         data: { status: "module_generated" },
       });
     } catch {

@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from "next/server";
 import { generate } from "@/src/lib/gemini";
 import { generateMCQ } from "@/src/lib/mcq";
 import { logAIUsage, assertBudget } from "@/src/lib/aiusage";
+import { prisma } from "@/src/lib/prisma";
+import { requireUser, notFoundForUser } from "@/src/lib/tenancy";
 import type { MCQQuestion } from "@/app/lib/types";
 import {
   GUARD_STATUS,
@@ -74,6 +76,13 @@ function normalize(data: unknown): MCQQuestion[] {
 }
 
 export async function POST(req: NextRequest) {
+  // Auth FIRST: generation burns CPU on the deterministic path and money on the
+  // LLM path, and the budget probe below is a DB query. None of that is available
+  // to a caller without a session.
+  const auth = await requireUser(req);
+  if (!auth.ok) return auth.response;
+  const ownerId = auth.userId;
+
   const bodyTooBig = guardBodyBytes(req.headers.get("content-length"));
   if (bodyTooBig) {
     return NextResponse.json({ error: bodyTooBig.error }, { status: GUARD_STATUS });
@@ -99,6 +108,18 @@ export async function POST(req: NextRequest) {
   );
   if (violation) {
     return NextResponse.json({ error: violation.error }, { status: GUARD_STATUS });
+  }
+
+  // `topicId` is optional and only used to attribute the cost row, but it is
+  // still a caller-supplied foreign key: unverified, it would file MY Gemini
+  // spend against HER topic in the shared cost ledger. CONTRACT CHANGE: an
+  // unknown or foreign topicId is a 404 rather than being logged as-is.
+  if (body.topicId) {
+    const ownTopic = await prisma.topic.findFirst({
+      where: { id: body.topicId, ownerId },
+      select: { id: true },
+    });
+    if (!ownTopic) return notFoundForUser("Topik");
   }
 
   // Cost gate (workstream C): the LLM branch below is the only paid path, but we

@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/src/lib/prisma";
+import { requireUser, notFoundForUser } from "@/src/lib/tenancy";
 import { review, outcomeToGrade, isDue, type SchedulerState } from "@/src/lib/scheduler";
 import type { AssessmentAttempt } from "@/app/lib/types";
 
@@ -75,6 +76,10 @@ function serialize(attempt: {
 }
 
 export async function POST(req: NextRequest) {
+  const auth = await requireUser(req);
+  if (!auth.ok) return auth.response;
+  const ownerId = auth.userId;
+
   let body: PostBody;
   try {
     body = (await req.json()) as PostBody;
@@ -93,6 +98,21 @@ export async function POST(req: NextRequest) {
     );
   }
 
+  // AssessmentAttempt has no ownerId of its own — it is reachable only through
+  // its Topic/Module. So the ids the caller SUPPLIED must be proven to be theirs
+  // BEFORE anything is written: without this check, anyone who learned (or
+  // guessed) another student's topic/module id could inject rows into her
+  // practice history, which is what drives her spaced-repetition schedule, her
+  // mastery percentages and the "sudah belajar hari ini" reminder suppression.
+  // Both ids are checked, not just one: an attempt row points at both, and a
+  // half-verified pair would still cross-link two accounts.
+  const [ownTopic, ownModule] = await Promise.all([
+    prisma.topic.findFirst({ where: { id: topicId, ownerId }, select: { id: true } }),
+    prisma.module.findFirst({ where: { id: moduleId, ownerId }, select: { id: true } }),
+  ]);
+  if (!ownTopic) return notFoundForUser("Topik");
+  if (!ownModule) return notFoundForUser("Modul");
+
   const created = await Promise.all(
     items.map(async (it) => {
       const confidence =
@@ -101,9 +121,18 @@ export async function POST(req: NextRequest) {
         typeof it.isCorrect === "boolean" ? it.isCorrect : null;
 
       // Carry forward this card's spaced-repetition state so the interval
-      // expands across reviews instead of restarting every time.
+      // expands across reviews instead of restarting every time. Scoped through
+      // the topic relation as well as the (already verified) ids: the owner
+      // filter is folded into the query itself so this read stays safe even if
+      // the pre-check above is ever refactored away.
       const prev = await prisma.assessmentAttempt.findFirst({
-        where: { moduleId, topicId, questionType: it.questionType, itemRef: it.itemRef },
+        where: {
+          moduleId,
+          topicId,
+          questionType: it.questionType,
+          itemRef: it.itemRef,
+          topic: { ownerId },
+        },
         orderBy: { answeredAt: "desc" },
         select: { intervalDays: true, repetitions: true, easeFactor: true, stability: true, difficulty: true },
       });
@@ -140,15 +169,25 @@ export async function POST(req: NextRequest) {
 }
 
 export async function GET(req: NextRequest) {
+  const auth = await requireUser(req);
+  if (!auth.ok) return auth.response;
+  const ownerId = auth.userId;
+
   const { searchParams } = new URL(req.url);
   const due = searchParams.get("due") === "1";
   const moduleId = searchParams.get("moduleId");
   const topicId = searchParams.get("topicId");
 
+  // The owner filter is the FIRST clause, not an optional extra: the caller's
+  // moduleId/topicId params only narrow a set that is already restricted to
+  // their own rows. Another student's ids therefore yield an empty list rather
+  // than her review queue — and no 404, because "is this a real id?" is not a
+  // question an unrelated review listing should answer.
   const where: {
+    topic: { ownerId: string };
     moduleId?: string;
     topicId?: string;
-  } = {};
+  } = { topic: { ownerId } };
   if (moduleId) where.moduleId = moduleId;
   if (topicId) where.topicId = topicId;
 

@@ -1,57 +1,77 @@
 import { prisma } from "./prisma";
 
-const DEFAULT_COURSE_ID = "default-course";
+// The catch-all course a topic lands in when the student never picked one.
+//
+// This used to be a FIXED row id ("default-course"), which was fine for one
+// student and is a cross-tenant bug for two: both would resolve to the same row,
+// so her ad-hoc topics would appear in my course list. It is now resolved by
+// (owner, name), so each student gets their own "Umum".
 const DEFAULT_COURSE_NAME = "Umum";
 
 /**
- * Resolve or create the Course a Topic belongs to. When `courseId` is supplied
- * we use that course (it is normally created during onboarding with its real
- * name). If the course does not yet exist we create it with a SENSIBLE human
- * name — never the raw id/cuid. When no `courseId` is given we fall back to a
- * single shared default course named "Umum".
+ * Resolve or create the Course a Topic belongs to, ALWAYS within one owner.
+ *
+ * When `courseId` is supplied we use that course — but only if it belongs to the
+ * caller. A course id from someone else's account is treated exactly like an
+ * unknown one (fall back to the caller's default course) rather than as an error:
+ * a 500 here would abort a synthesis the student already paid a Gemini call for,
+ * and confirming that the id exists would leak the other account's contents.
  */
-async function resolveCourse(courseId?: string) {
+async function resolveCourse(ownerId: string, courseId?: string) {
   if (courseId) {
-    const existing = await prisma.course.findUnique({ where: { id: courseId } });
+    const existing = await prisma.course.findFirst({ where: { id: courseId, ownerId } });
     if (existing) return existing;
-    // Course missing: create it, but never name it after the cuid. A name
-    // collision (e.g. with the default "Umum") or other failure falls back to
-    // the shared default course rather than throwing mid-synthesis.
+    // Course missing: create it under this owner, but never name it after the
+    // cuid. A name collision (e.g. with the default "Umum") or any other failure
+    // falls back to the shared default course rather than throwing mid-synthesis.
     try {
-      return await prisma.course.create({ data: { id: courseId, name: DEFAULT_COURSE_NAME } });
+      return await prisma.course.create({
+        data: { id: courseId, ownerId, name: DEFAULT_COURSE_NAME },
+      });
     } catch {
-      return resolveDefaultCourse();
+      return resolveDefaultCourse(ownerId);
     }
   }
-  return resolveDefaultCourse();
+  return resolveDefaultCourse(ownerId);
 }
 
-async function resolveDefaultCourse() {
+async function resolveDefaultCourse(ownerId: string) {
   return prisma.course.upsert({
-    where: { id: DEFAULT_COURSE_ID },
+    // Course names are unique PER OWNER (prisma/schema.prisma @@unique), so this
+    // is the compound key Prisma generates for it.
+    where: { ownerId_name: { ownerId, name: DEFAULT_COURSE_NAME } },
     update: {},
-    create: { id: DEFAULT_COURSE_ID, name: DEFAULT_COURSE_NAME },
+    create: { ownerId, name: DEFAULT_COURSE_NAME },
   });
 }
 
 /**
- * Resolve or create the Topic a module is being built for. If `topicId` is
- * supplied and exists, it wins. Otherwise we look up (or create) a Topic by
- * title under the resolved course. The human-facing title is the canonical key
- * within a course so repeated synthesis on the same topic maps to one row.
+ * Resolve or create the Topic a module is being built for, scoped to `ownerId`.
+ *
+ * If `topicId` is supplied and belongs to the caller, it wins. Otherwise we look
+ * up (or create) a Topic by title under the resolved course. The human-facing
+ * title is the canonical key within a course, so repeated synthesis on the same
+ * topic maps to one row — and the lookup is filtered by owner so two students
+ * studying "Antropologi Ekologi" get two topics, not a shared one.
  */
-export async function ensureTopic(title: string, topicId?: string, courseId?: string) {
+export async function ensureTopic(args: {
+  ownerId: string;
+  title: string;
+  topicId?: string;
+  courseId?: string;
+}) {
+  const { ownerId, title, topicId, courseId } = args;
   if (topicId) {
-    const existing = await prisma.topic.findUnique({ where: { id: topicId } });
+    const existing = await prisma.topic.findFirst({ where: { id: topicId, ownerId } });
     if (existing) return existing;
   }
-  const course = await resolveCourse(courseId);
+  const course = await resolveCourse(ownerId, courseId);
   const existing = await prisma.topic.findFirst({
-    where: { title, courseId: course.id },
+    where: { title, courseId: course.id, ownerId },
   });
   if (existing) return existing;
   return prisma.topic.create({
-    data: { title, courseId: course.id, orderSource: "custom", status: "papers_fetched" },
+    data: { title, ownerId, courseId: course.id, orderSource: "custom", status: "papers_fetched" },
   });
 }
 
@@ -62,27 +82,30 @@ export async function ensureTopic(title: string, topicId?: string, courseId?: st
  * otherwise a failed OpenAlex call would leave an orphan Topic behind.
  *
  * Resolution order: the explicitly-picked course, else the course the existing
- * topic already belongs to. Returns undefined when there is no major to apply
- * (no course, unknown course, or a course created before the field existed), in
- * which case callers fall back to discipline-neutral behaviour.
+ * topic already belongs to. Both lookups are owner-scoped: an id belonging to
+ * another student resolves to undefined, never to their major. Returns undefined
+ * when there is no major to apply (no course, unknown course, not the caller's
+ * course, or a course created before the field existed), in which case callers
+ * fall back to discipline-neutral behaviour.
  */
 export async function resolveCourseMajor(args: {
+  ownerId: string;
   courseId?: string;
   topicId?: string;
 }): Promise<string | undefined> {
   if (args.courseId) {
-    const course = await prisma.course.findUnique({
-      where: { id: args.courseId },
+    const course = await prisma.course.findFirst({
+      where: { id: args.courseId, ownerId: args.ownerId },
       select: { major: true },
     });
     if (course?.major) return course.major;
   }
   if (args.topicId) {
-    const topic = await prisma.topic.findUnique({
-      where: { id: args.topicId },
+    const topic = await prisma.topic.findFirst({
+      where: { id: args.topicId, ownerId: args.ownerId },
       select: { course: { select: { major: true } } },
     });
-    if (topic?.course.major) return topic.course.major;
+    if (topic?.course?.major) return topic.course.major;
   }
   return undefined;
 }

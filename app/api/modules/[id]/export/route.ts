@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/src/lib/prisma";
+import { notFoundForUser, requireUser } from "@/src/lib/tenancy";
 import { generateMCQ } from "@/src/lib/mcq";
 import { generatePdf } from "@/src/lib/pdf";
 import type { PaperType } from "@/src/lib/sources/types";
@@ -22,10 +23,16 @@ export const dynamic = "force-dynamic";
 // Contract (I3): GET /api/modules/[id]/export?format=md|anki|pdf
 //   200 -> file download (Content-Disposition: attachment)
 //   400 -> unknown format
-//   404 -> module not found
+//   401 -> no (or invalid) session
+//   404 -> module not found, or not this student's module
 // Read-only: no writes, no LLM call, no cost. `pdf` is generated here on the
 // server (a real downloadable file, not the browser's print dialog) so it works
 // directly on iPad Safari without the hidden "Save as PDF" pinch gesture.
+//
+// A download is exactly the shape of leak that goes unnoticed: the response is a
+// file, not a screen, so nobody would spot the other student's module inside it.
+// Hence the owner is folded into the module lookup, and the question bank the
+// Anki deck is built from is scoped through its topic.
 
 /**
  * Anki cards come from the student's question bank first (generation effect —
@@ -33,9 +40,17 @@ export const dynamic = "force-dynamic";
  * is empty we fall back to the DETERMINISTIC cloze generator, so an export
  * always succeeds without spending an API call.
  */
-async function collectCards(topicId: string, contentMarkdown: string): Promise<ExportCard[]> {
+async function collectCards(
+  topicId: string,
+  ownerId: string,
+  contentMarkdown: string,
+): Promise<ExportCard[]> {
   const bank = await prisma.questionBankItem.findMany({
-    where: { topicId },
+    // QuestionBankItem has no owner column; it is reachable only through its
+    // Topic, so that is where the filter goes. The topicId already came from an
+    // owner-checked module — this is the belt to that braces, and it keeps the
+    // rule ("every read is scoped") true by inspection of this one query.
+    where: { topicId, topic: { ownerId } },
     orderBy: { createdAt: "asc" },
   });
 
@@ -65,8 +80,14 @@ async function collectCards(topicId: string, contentMarkdown: string): Promise<E
   }));
 }
 
-export async function GET(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
-  const { id } = await params;
+export async function GET(req: NextRequest, ctx: RouteContext<"/api/modules/[id]/export">) {
+  // Auth first: an anonymous caller must not even reach the format parser, let
+  // alone a DB round-trip.
+  const auth = await requireUser(req);
+  if (!auth.ok) return auth.response;
+  const ownerId = auth.userId;
+
+  const { id } = await ctx.params;
 
   const format = parseExportFormat(req.nextUrl.searchParams.get("format"));
   if (!format) {
@@ -76,13 +97,11 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
     );
   }
 
-  const mod = await prisma.module.findUnique({
-    where: { id },
+  const mod = await prisma.module.findFirst({
+    where: { id, ownerId },
     include: { topic: true, courses: { include: { course: true } } },
   });
-  if (!mod) {
-    return NextResponse.json({ error: "Modul tidak ditemukan." }, { status: 404 });
-  }
+  if (!mod) return notFoundForUser("Modul");
 
   // Grounding sources are needed by both the `md` and `pdf` formats, so resolve
   // them once. An unparseable list falls back to no appendix rather than 500ing.
@@ -92,6 +111,9 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
   } catch {
     paperIds = [];
   }
+  // Paper is global by design (deduplicated across users, no private fields), so
+  // only the join is owner-scoped — and here the ids come from a module already
+  // proven to be the caller's.
   const fetched = paperIds.length
     ? await prisma.paper.findMany({ where: { id: { in: paperIds } } })
     : [];
@@ -128,7 +150,7 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
   };
 
   if (format === "anki") {
-    const cards = await collectCards(mod.topicId, mod.contentMarkdown);
+    const cards = await collectCards(mod.topicId, ownerId, mod.contentMarkdown);
     const body = toAnkiTSV(cards, mod.topic.title);
     return new NextResponse(body, {
       status: 200,

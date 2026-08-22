@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/src/lib/prisma";
+import { requireUser } from "@/src/lib/tenancy";
 import {
   alignedTopicIds,
   diffTopicOrder,
@@ -38,16 +39,22 @@ export const dynamic = "force-dynamic";
 // everything else returns to "custom" so the "unverified order" badge stays
 // truthful when a corrected order is pasted.
 
-async function loadState(courseId: string) {
-  const course = await prisma.course.findUnique({
-    where: { id: courseId },
+async function loadState(courseId: string, ownerId: string) {
+  // FOLD the owner into the course read: a course that is not the caller's
+  // resolves to null and the whole endpoint 404s, so another student's RPS can
+  // never be read or written. We use findFirst (not findUnique) precisely so the
+  // owner can be part of the where clause.
+  const course = await prisma.course.findFirst({
+    where: { id: courseId, ownerId },
     select: { id: true, name: true },
   });
   if (!course) return null;
 
   const [topics, reconcile] = await Promise.all([
     prisma.topic.findMany({
-      where: { courseId },
+      // Topics carry ownerId directly, so fold it in here too — every topic we
+      // diff and every orderSource we flip belongs to this student.
+      where: { courseId, ownerId },
       // cuid is time-prefixed, so ascending id is creation order — the tiebreak
       // `sortCustomOrder` falls back to when a topic has no weekNumber.
       orderBy: { id: "asc" },
@@ -89,11 +96,15 @@ function serialize(state: NonNullable<Awaited<ReturnType<typeof loadState>>>) {
 }
 
 export async function GET(
-  _req: NextRequest,
+  req: NextRequest,
   { params }: { params: Promise<{ courseId: string }> },
 ) {
+  const auth = await requireUser(req);
+  if (!auth.ok) return auth.response;
+  const ownerId = auth.userId;
+
   const { courseId } = await params;
-  const state = await loadState(courseId);
+  const state = await loadState(courseId, ownerId);
   if (!state) {
     return NextResponse.json({ error: "Mata kuliah tidak ditemukan." }, { status: 404 });
   }
@@ -104,6 +115,10 @@ export async function PUT(
   req: NextRequest,
   { params }: { params: Promise<{ courseId: string }> },
 ) {
+  const auth = await requireUser(req);
+  if (!auth.ok) return auth.response;
+  const ownerId = auth.userId;
+
   const bodyTooBig = guardBodyBytes(req.headers.get("content-length"));
   if (bodyTooBig) {
     return NextResponse.json({ error: bodyTooBig.error }, { status: GUARD_STATUS });
@@ -147,7 +162,7 @@ export async function PUT(
     return NextResponse.json({ error: tooManyTopics.error }, { status: GUARD_STATUS });
   }
 
-  const before = await loadState(courseId);
+  const before = await loadState(courseId, ownerId);
   if (!before) {
     return NextResponse.json({ error: "Mata kuliah tidak ditemukan." }, { status: 404 });
   }
@@ -174,17 +189,20 @@ export async function PUT(
         customOrder: JSON.stringify(customOrder),
       },
     }),
+    // These ids came from `before.topics`, which was already owner-scoped, but
+    // we add `ownerId` to the write filter too so a stray id can never flip a
+    // topic that is not the caller's — defense in depth on a multi-row write.
     prisma.topic.updateMany({
-      where: { id: { in: aligned } },
+      where: { id: { in: aligned }, ownerId },
       data: { orderSource: "official_rps" },
     }),
     prisma.topic.updateMany({
-      where: { id: { in: unverified } },
+      where: { id: { in: unverified }, ownerId },
       data: { orderSource: "custom" },
     }),
   ]);
 
-  const after = await loadState(courseId);
+  const after = await loadState(courseId, ownerId);
   if (!after) {
     return NextResponse.json({ error: "Mata kuliah tidak ditemukan." }, { status: 404 });
   }
