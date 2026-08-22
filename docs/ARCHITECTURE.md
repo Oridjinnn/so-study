@@ -1,6 +1,6 @@
 # ARCHITECTURE — So-study
 
-**Status:** current as of 2026-08-18 (closes ROADMAP §7.6 items 13 and 18)
+**Status:** current as of 2026-08-22 (adds hosted Postgres, auth + tenancy)
 **Scope:** how the code is laid out, which module may import which, and the
 invariants a change must not break. Product intent and phase status live in
 [`ROADMAP.md`](ROADMAP.md); the rules this document enforces live in
@@ -10,18 +10,26 @@ invariants a change must not break. Product intent and phase status live in
 
 ## 1. Runtime shape
 
-One Next.js (App Router) process, one SQLite file, one external LLM.
+One Next.js (App Router) process, one **hosted PostgreSQL** database, one external
+LLM — and, in front of all of it, one edge gate (`proxy.ts`).
+
+The database was a local SQLite file until 2026-08-22. That is what made the app
+un-deployable: a serverless filesystem is ephemeral and per-instance, so every
+cold start would have served a different empty database. Postgres was chosen over
+Turso/libSQL because it needs **zero** new dependencies and no preview features
+(`docs/DEPLOY.md` §1).
 
 ```mermaid
 flowchart LR
   subgraph Browser["Browser (iPad/Safari) — client components"]
     UI[app/page.tsx + app/components/*]
   end
+  PROXY[proxy.ts edge gate<br/>verifies cookie signature]
   subgraph Server["Next.js server — runtime = nodejs"]
-    API[app/api/*/route.ts]
+    API[app/api/*/route.ts<br/>requireUser + ownerId scoping]
     LOGIC[src/lib/* server logic]
   end
-   DB[(SQLite<br/>prisma/dev.db)]
+   DB[(hosted PostgreSQL)]
    GEM[Gemini REST API]
    subgraph SRC["src/lib/sources (provider fan-out)"]
      OA[OpenAlex API]
@@ -32,7 +40,9 @@ flowchart LR
    end
    SCACHE[(.cache/<br/>per-provider)]
 
-   UI -->|fetch JSON| API
+   UI -->|fetch JSON| PROXY
+   PROXY -->|401 / redirect to /login| UI
+   PROXY --> API
    API --> LOGIC
    LOGIC --> DB
    LOGIC -->|server-side key| GEM
@@ -44,9 +54,40 @@ Every route declares `runtime = "nodejs"` and `dynamic = "force-dynamic"`: they
 touch Prisma and must not be statically optimised or edge-bundled.
 
 **Secrets.** `GEMINI_API_KEY` is read in exactly one place, `src/lib/gemini.ts`
-(server-only). `DATABASE_URL` is read by Prisma from `prisma/schema.prisma`. No
-secret is ever prefixed `NEXT_PUBLIC_`, so none can reach the client bundle
-(rules I10, E4).
+(server-only). `SESSION_SECRET` is read in exactly one place, `src/lib/auth.ts`.
+`DATABASE_URL` is read by Prisma from `prisma/schema.prisma`. No secret is ever
+prefixed `NEXT_PUBLIC_`, so none can reach the client bundle (rules I10, E4).
+
+### Auth and tenancy (two layers, on purpose)
+
+1. **`proxy.ts`** — note this Next.js version renamed the `middleware` convention
+   to `proxy`. It verifies the session cookie's **signature** only (no Prisma: per
+   the framework docs, proxy code runs outside the app's module graph and may be
+   deployed to the edge), redirecting unauthenticated page requests to
+   `/login?next=…` and answering unauthenticated `/api/*` with `401`.
+2. **`requireUser(req)`** (`src/lib/tenancy.ts`) in **every** route handler, which
+   re-verifies the cookie and returns the user id. Route handlers trust **no**
+   request header, so a route stays safe even if it is ever reached outside the
+   proxy's matcher. Layer 1 is a matcher regex; it is never the only thing between
+   the internet and the data.
+
+`ownerId` lives on `Course`, `Topic` and `Module`; everything else is scoped
+through its parent relation. Ownership is enforced by folding `ownerId` into the
+query that was already being run — `findFirst({ where: { id, ownerId } })` — never
+by a separate "am I allowed?" round-trip, and a missing-or-not-yours row is a
+**404**, never a 403. `Paper` and `AIUsage` stay global by design (shared
+deduplicated bibliography; one shared API key and wallet).
+
+`app/api/route-guard.test.ts` enforces all of this structurally: it walks
+`app/api/**/route.ts` and fails when a handler is missing `requireUser`, when a
+handler touching `Course`/`Topic`/`Module` never mentions `ownerId`, or when a
+public route is not declared in **both** its allowlist and `proxy.ts`. Full model
+and its explicit limits: [`DEPLOY.md`](DEPLOY.md) §9–10.
+
+**Cost is gated, not just observed.** `src/lib/aiusage.ts` aggregates today's and
+this month's `AIUsage` spend and blocks (HTTP 429) before any paid Gemini call when
+a cap is exceeded. It fails **closed**: a failing budget query blocks rather than
+allows.
 
 ---
 
@@ -192,10 +233,19 @@ AIUsage                                   (cost, optionally per topic)
 
 Notes that matter when changing code:
 
-- SQLite has no array/JSON column type here: `Module.sourcePaperIds`,
-  `ModuleChunk.embedding`, `QASession.messages` and `QuestionBankItem.options`
-  are JSON **strings**. Always parse defensively — every current call site wraps
-  `JSON.parse` in try/catch and degrades instead of throwing.
+- `Module.sourcePaperIds`, `ModuleChunk.embedding`, `QASession.messages` and
+  `QuestionBankItem.options` are JSON **strings**, not JSON columns — inherited
+  from the SQLite era and deliberately kept on the Postgres move so the migration
+  stayed a datasource change rather than a data rewrite. Always parse defensively;
+  every current call site wraps `JSON.parse` in try/catch and degrades instead of
+  throwing.
+- `User` owns the top of the tree: `Course.ownerId`, `Topic.ownerId` and
+  `Module.ownerId` all cascade from it. `Topic.ownerId`/`Module.ownerId` are
+  denormalized from the parent so authorization is one hop instead of a join up to
+  `Course`. `Course.name` is `@@unique([ownerId, name])`, not globally unique —
+  two students may study the same course without colliding or discovering each
+  other. `PushSubscription.userId` and `Settings.userId` (now the primary key,
+  replacing the old `"singleton"` row) keep reminders per person.
 - `QuestionBankItem.author` is an authorisation boundary: `PATCH`/`DELETE` on
   `/api/questions` refuse anything not authored by `student` (403).
 - `ModuleChunk.embedding` now stores a real Gemini `text-embedding-004` vector at

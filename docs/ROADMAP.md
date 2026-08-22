@@ -1,10 +1,9 @@
 # ROADMAP — Pre-Study Webapp "Teori Antropologi Kontemporer"
 
 **Project codename:** `So-study`
-**Status:** Draft v4 (audit EXECUTED — all P0/P1/P2 items from §7.6 implemented 2026-08-18;
-P2 tail — export, input guards, README/architecture doc, DOM tests — closed 2026-08-18 14:30 WIB)
-**Owner:** habel-davidson (build) — end user: 1 student (iPad)
-**Last updated:** 2026-08-18 14:30 WIB
+**Status:** Draft v5 (deploy + hosted DB + 2-user auth/tenancy + hard AI budget + iPad PWA shipped 2026-08-22; see §17)
+**Owner:** habel-davidson (build) — end users: 2 trusted students (iPad)
+**Last updated:** 2026-08-22 21:30 WIB
 **Source of truth:** this file + `docs/whitepaper/*` + `docs/rules/*` + `docs/RESEARCH.md`
 + `docs/ARCHITECTURE.md` (code layout & invariants)
 
@@ -12,10 +11,15 @@ P2 tail — export, input guards, README/architecture doc, DOM tests — closed 
 
 ## 0. TL;DR
 
-A single-user, local-first web app that turns academic papers into structured,
+A small, local-first web app that turns academic papers into structured,
 pre-lecture study modules for one or more courses, then lets the student read,
 ask scoped questions, and take assessments — giving an early head start before
 each class. It is **not** a chatbot and **not** a substitute for lectures.
+
+**As deployed (2026-08-22):** it is now a **two-user** web app (no signup) running
+on a hosted PostgreSQL database behind a passphrase login, installed on an iPad as
+a standalone PWA, with a hard daily/monthly Gemini cost cap. See §17 and
+[`DEPLOY.md`](DEPLOY.md).
 
 **Current state (2026-08-18, v4):** The full create→retrieve→approve→synthesize→read→
 ask→assess loop works locally, and the *learning-science closure* from the audit (§7.6)
@@ -45,7 +49,7 @@ lecture and reports lower first-contact confusion in class.
 
 | Attribute | Value |
 | --- | --- |
-| Users | 1 (single student) |
+| Users | 2 trusted students (no public signup) |
 | Device | iPad + Magic Keyboard |
 | Browser | Safari |
 | Connectivity | Online-capable, but module reading must work offline |
@@ -65,7 +69,8 @@ lecture and reports lower first-contact confusion in class.
 
 ## 3. Non-Goals (explicit)
 
-- NOT multi-user / NOT a scalable product (yet) — but multi-*course* is in scope.
+- NOT a scalable product — but **two** trusted users and multi-*course* per user are in scope
+  (see §17; there is no signup, no roles, no billing).
 - NOT a general research assistant / literature-review tool.
 - NOT a native iOS app (PWA covers all needed UX; native is overkill + $99/yr).
 - NOT a replacement for attending lectures. Copy/UI must reinforce "head-start".
@@ -78,13 +83,13 @@ lecture and reports lower first-contact confusion in class.
 | Decision | Choice | Rationale |
 | --- | --- | --- |
 | Framework | Next.js (App Router) + TS + Tailwind | Zero-config Vercel deploy; single codebase |
-| DB | **Local SQLite file** (`prisma/dev.db`) for now; **Turso** deferred | Single-user local-first; file SQLite persists fine on one machine. Turso is the migration path if/when deployed to serverless |
+| DB | **Hosted PostgreSQL** (`prisma/schema.prisma`, `provider = "postgresql"`) | The old local SQLite file was the thing that made the app un-deployable — a serverless filesystem is ephemeral and per-instance. Postgres needed zero new deps vs. Turso's driver adapter (§17.1). |
 | LLM | Google Gemini API (server-side only) | Synthesis/Q&A/grading; key never in client bundle |
 | Retrieval | **OpenAlex** (primary, no key) + Semantic Scholar (fallback) | OpenAlex more stable/free; retrieval is heuristic, not LLM |
 | Q&A method | **Retrieval-augmented** (embed module chunks, retrieve 3–5, inject only those) | Grounded + far cheaper than full-module injection |
-| Deploy | Local-first now; **Vercel Hobby (free)** deferred | Running on `localhost:3000`; deploy is a Phase 3 decision, not blocking |
-| Auth | None (single user) | Keep friction at zero |
-| Cost target | $0 infra; Gemini per-use cost made visible via dashboard | "Cost 0" = infra only |
+| Deploy | **Vercel** (free tier) + hosted Postgres + iPhone web-push (VAPID) | Shipped 2026-08-22; runbook in [`DEPLOY.md`](DEPLOY.md). `vercel.json` crons unchanged. |
+| Auth | Signed-cookie passphrase per trusted user + edge `proxy.ts` gate + `requireUser` in every route + `ownerId` tenancy | No auth library, no signup. Friction kept at: one passphrase field, one Keychain autofill on the iPad (§17.9–10). |
+| Cost target | $0 infra; Gemini per-use cost **capped** by `AI_DAILY_COST_LIMIT_USD`/`AI_MONTHLY_COST_LIMIT_USD` (defaults $1/$20, enforced before every paid call; fails closed) | "Cost 0" = infra only |
 
 ---
 
@@ -186,7 +191,7 @@ Legend: ✅ done · 🟡 done-with-known-issues · ❌ not done
 - [x] Auto-generate first MCQ set + essay prompt/rubric from the module (no empty Latih)
 - [x] **Week / due-before-lecture date** on topics so "X/N siap" is meaningful
 - [x] Tie dashboard "ready" to **actual engagement** (opened + attempted practice), not module-exists
-- [ ] Deploy to Vercel Hobby (optional) + Turso prod DB; optional passphrase gate
+- [x] Deploy to Vercel + hosted Postgres + passphrase auth (2 trusted users) — shipped 2026-08-22; runbook in [`DEPLOY.md`](DEPLOY.md)
 - [ ] Snapshot/checkpoint system (fork a fresh attempt)
 - [ ] **Local-LLM toggle (Ollama)** for routine Q&A once a module exists
 - [x] **Export** module → **MD** (`?format=md`, module + essay prompt/rubric + numbered
@@ -321,7 +326,7 @@ SRS is the winning combo; FSRS is modern standard).
 | R4 | Gemini API cost runaway | Low | Med | RAG; modules cached; MCQ free; **AIUsage panel** |
 | R5 | Offline Q&A fabricated answer | Med | High | UI forbids offline Q&A; explicit "connect" state ✅ |
 | R6 | Lost essay draft on disconnect | Med | Med | localStorage draft (IndexedDB planned) |
-| R7 | SQLite non-persistence on serverless | High (if deployed) | High | Use Turso when deploying; local file fine for now |
+| R7 | DB non-persistence on serverless | Closed | — | Migrated to hosted PostgreSQL 2026-08-22 (the local SQLite file was the blocker). See §17/DEPLOY.md. |
 | **R8** | **"Closed-book" is leaky → defeats retrieval practice** | High | Med | ✅ **Mitigated** — Latih locks Baca+Tanya+Sumber (`visibleTabIds`) |
 | **R9** | **No attempt persistence → no spacing → forgetting curve unmanaged** | High | High | ✅ **Mitigated** — `AssessmentAttempt` + scheduler + `ReviewQueue` |
 | **R10** | **Student is passive consumer (all AI-generated)** → weak retention | Med | Med | ✅ **Mitigated** — author/edit MCQs (`QuestionBank`), own prompts |
@@ -348,8 +353,9 @@ SRS is the winning combo; FSRS is modern standard).
 2. **Gemini API key** — available ✅ (in `.env`).
 3. **Local-LLM later?** — Ollama toggle is Phase 3; decide if worth earlier.
 4. **Project location** — **RESOLVED**: `/home/habel-davidson/so-study` (renamed from `anthro-study`).
-5. **Deploy target** — currently **local-first** (`localhost:3000`); Vercel/Turso deferred to
-   Phase 3. Revisit if the student needs access off the local machine.
+5. **Deploy target** — **CLOSED**: shipped to Vercel + hosted Postgres 2026-08-22 (§17). The
+   prior blocker was the local SQLite file, which cannot persist on serverless. Two trusted users,
+   one shared API key, iPad PWA. No signup. Runbook in [`DEPLOY.md`](DEPLOY.md).
 
 ---
 
@@ -889,7 +895,6 @@ the existing claims true and verifiable. `bash scripts/ci.sh` is green at close 
 
 ### Genuinely still open (not claimed done here)
 
-- **Deploy (Vercel + Turso)** — owner deploys; iPad reach depends on it.
 - **Real iPad / VoiceOver device test** — cannot be run in this environment; checklist below.
 - **Gap G-rest** (error-detection / dependency-graph / conceptual practice), **H** (highlight→card),
   **I** (CRDT sync), **L** (efficacy quiz) — deferred as before.
@@ -905,3 +910,69 @@ the existing claims true and verifiable. `bash scripts/ci.sh` is green at close 
 - [ ] Closed-book: confirm Baca/Tanya/Sumber lock during Latih.
 - [ ] 44px touch targets; no hover-only affordances with Magic Keyboard only.
 - [ ] Dynamic Type: module reader reflows at large text sizes.
+
+## 18. Deploy / Hosted-DB / 2-User Auth / iPad PWA (2026-08-22)
+
+**Status:** EXECUTED 2026-08-22. The core deliverable this pass was to make the app usable by a
+second trusted person on her iPad as a **standalone installed PWA**, end-to-end and without
+mid-step approval. That forced four things that were previously deferred: a deployable database,
+real (if minimal) auth + tenancy, a hard AI cost cap, and a real iPad install path.
+
+### Why this broke the old design (not just "add a server")
+
+- The app stored everything in a local SQLite file (`prisma/dev.db`). A serverless filesystem is
+  **ephemeral and per-instance**, so a deploy would have served a different empty DB on every cold
+  start and discarded every write. This was the actual blocker, not "we never pushed a button".
+- There was **no auth and the API was world-writable**. The moment it had a public URL, anyone on
+  the internet could read and overwrite the study data. A second user needs at minimum to be kept
+  apart from me.
+
+### Decisions
+
+1. **Database = PostgreSQL, not Turso.** Switching provider invalidated the SQLite migration history,
+   so it was re-baselined to a single Postgres migration (`20260822000000_postgres_baseline_tenancy`).
+   Postgres won because it needs **zero** new dependencies (no driver adapter, no preview features)
+   versus Turso's `@libsql/client` + `@prisma/adapter-libsql`. Detailed in [`DEPLOY.md` §1](DEPLOY.md).
+2. **Auth = signed-cookie passphrase, no library.** `src/lib/auth.ts` (HMAC-SHA256 session, 90-day
+   TTL; PBKDF2-SHA256 passphrase, 600k iters) + `proxy.ts` edge gate + `requireUser` in every route.
+   `SESSION_SECRET` is **required** — auth fails closed without it. Two users created only via
+   `scripts/seed-users.mjs`; no signup route exists. (This Next.js version renamed the `middleware`
+   convention to `proxy`.)
+3. **Tenancy = `ownerId` on Course/Topic/Module**, scoped through the query already being run
+   (`findFirst({ where: { id, ownerId } })`), missing-or-not-yours = **404** (never 403). `Paper`
+   stays global (deduped bibliography, no private data); `AIUsage` stays global (one shared key, one
+   wallet). `Course.name` is now `@@unique([ownerId, name])`.
+4. **Hard AI budget cap** (`src/lib/aiusage.ts`): `AI_DAILY_COST_LIMIT_USD`/`AI_MONTHLY_COST_LIMIT_USD`
+   (default $1/$20, reset in `AI_BUDGET_TIMEZONE`) checked **before** every paid Gemini call → 429.
+   Fails **closed** (a failing budget query blocks, never allows). `0` = block-everything.
+5. **iPad PWA**: `app/manifest.ts` (standalone, `id`, apple icon) + `public/sw.js` (no caching of
+   `/api`, `/login`; manifest precached) + client session-aware `apiFetch` (401→/login once, 503 no
+   loop) + `AccountBar`. `/manifest.webmanifest`, `/sw.js`, icons exempt from the auth gate on
+   purpose — Safari fetches the manifest without credentials; a redirect-to-/login would degrade the
+   install to a plain bookmark.
+
+### Verification (real, not asserted)
+
+- Full `npx tsc --noEmit` clean, `eslint` 0 errors, `npx vitest run` all green, `npx next build` ok.
+- `app/api/route-guard.test.ts` enforces structurally: every `app/api/**/route.ts` calls
+  `requireUser`; any handler touching Course/Topic/Module mentions `ownerId`; public routes are
+  declared in both the test allowlist and `proxy.ts`.
+- Live prod-build run (LAN http, so the request-aware `Secure` flag was exercised) verified:
+  unauth page→/login, unauth API→401, manifest 200 without creds, both logins set cookies, each user
+  sees only their own data, cross-tenant module/topic/export/rps all 404, per-owner same course name
+  allowed, zero-budget run returns 429 on every paid route.
+
+### Deliverables
+
+- `prisma/schema.prisma` (Postgres + User/tenancy) + baseline migration; `src/lib/auth.ts`,
+  `src/lib/tenancy.ts`, `proxy.ts`, login + auth routes, `scripts/seed-users.mjs`,
+  `scripts/import-sqlite.mjs`, per-route guards, `app/lib/api.ts` + `AccountBar`, budget cap,
+  `app/manifest.ts` + `public/sw.js`, deploy docs.
+- Runbook: [`docs/DEPLOY.md`](DEPLOY.md) (Postgres, env, seeding, auth/tenancy model, iPad install).
+  README + ARCHITECTURE updated. `.env` is gitignored; `so-study-validation-*.zip` stays untracked.
+
+### Genuinely still open
+
+- **Real iPad / VoiceOver device test + real deployment** — cannot be run in this environment; the
+  `DEPLOY.md` install checklist and the ROADMAP iPad checklist remain the owner's manual steps.
+- **Gap G-rest / H / I / L** — deferred as before.
