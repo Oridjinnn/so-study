@@ -6,6 +6,9 @@ vi.mock("@/src/lib/prisma", () => ({
   },
 }));
 vi.mock("@/src/lib/essay", () => ({ generateEssayPromptWithFallback: vi.fn() }));
+vi.mock("@/src/lib/aiusage", () => ({
+  assertBudget: vi.fn(async () => {}),
+}));
 
 import { POST } from "./route";
 import { prisma } from "@/src/lib/prisma";

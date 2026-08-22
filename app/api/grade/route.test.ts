@@ -10,14 +10,17 @@ vi.mock("@/src/lib/gemini", () => ({
 }));
 vi.mock("@/src/lib/aiusage", () => ({
   logAIUsage: vi.fn(async () => {}),
+  assertBudget: vi.fn(async () => {}),
 }));
 
 import { POST } from "./route";
 import { prisma } from "@/src/lib/prisma";
 import { generate } from "@/src/lib/gemini";
+import { assertBudget } from "@/src/lib/aiusage";
 
 const topic = prisma.topic as unknown as { findUnique: ReturnType<typeof vi.fn> };
 const gen = generate as unknown as ReturnType<typeof vi.fn>;
+const budget = assertBudget as unknown as ReturnType<typeof vi.fn>;
 
 function makeReq(body: unknown, contentLength?: string) {
   return {
@@ -30,6 +33,8 @@ describe("POST /api/grade", () => {
   beforeEach(() => {
     topic.findUnique.mockReset();
     gen.mockReset();
+    budget.mockReset();
+    budget.mockResolvedValue(undefined);
     // Unknown topic → generic course name, no DB failure.
     topic.findUnique.mockResolvedValue(null);
     gen.mockResolvedValue({ text: "Umpan balik terperinci.", usage: { promptTokens: 10, candidatesTokens: 20 } });
@@ -52,5 +57,14 @@ describe("POST /api/grade", () => {
     gen.mockRejectedValue(new Error("upstream down"));
     const res = await POST(makeReq({ studentAnswer: "Jawaban esai yang cukup panjang." }));
     expect(res.status).toBe(502);
+  });
+
+  it("returns 429 with no Gemini call when the budget is blocked", async () => {
+    budget.mockRejectedValue(new Error("Anggaran AI harian sudah habis: ..."));
+    const res = await POST(makeReq({ studentAnswer: "Jawaban esai yang cukup panjang." }));
+    expect(res.status).toBe(429);
+    expect(gen).not.toHaveBeenCalled();
+    const body = (await res.json()) as { error: string };
+    expect(body.error.toLowerCase()).toContain("anggaran");
   });
 });

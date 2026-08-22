@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { generate } from "@/src/lib/gemini";
-import { logAIUsage } from "@/src/lib/aiusage";
+import { logAIUsage, assertBudget } from "@/src/lib/aiusage";
 import { prisma } from "@/src/lib/prisma";
 import {
   GUARD_STATUS,
@@ -60,6 +60,15 @@ export async function POST(req: NextRequest) {
   );
   if (violation) {
     return NextResponse.json({ error: violation.error }, { status: GUARD_STATUS });
+  }
+
+  // Cost gate (workstream C): never spend the grading call past the hard budget
+  // cap. Runs after the cheap length guards, before the first (and only) paid
+  // Gemini call below.
+  try {
+    await assertBudget();
+  } catch (e) {
+    return NextResponse.json({ error: (e as Error).message }, { status: 429 });
   }
 
   const prompt =

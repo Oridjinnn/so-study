@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/src/lib/prisma";
 import { generateEssayPromptWithFallback } from "@/src/lib/essay";
+import { assertBudget } from "@/src/lib/aiusage";
 import { GUARD_STATUS, guardBodyBytes } from "@/src/lib/guards";
 
 export const runtime = "nodejs";
@@ -34,6 +35,15 @@ export async function POST(req: NextRequest) {
   });
   if (!mod) {
     return NextResponse.json({ error: "Modul tidak ditemukan." }, { status: 404 });
+  }
+
+  // Cost gate (workstream C): generateEssayPromptWithFallback() may spend a
+  // Gemini call, so the gate runs before it. The module lookup above is a cheap
+  // read; the gate sits in front of the only paid work.
+  try {
+    await assertBudget();
+  } catch (e) {
+    return NextResponse.json({ error: (e as Error).message }, { status: 429 });
   }
 
   try {

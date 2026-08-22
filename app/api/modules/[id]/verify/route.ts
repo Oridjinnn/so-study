@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { generate } from "@/src/lib/gemini";
-import { logAIUsage } from "@/src/lib/aiusage";
+import { logAIUsage, assertBudget } from "@/src/lib/aiusage";
 import { prisma } from "@/src/lib/prisma";
 import { loadModuleForVerification } from "@/src/lib/moduleSources";
 import { runVerification, verificationPayload } from "@/src/lib/verification";
@@ -27,6 +27,15 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   const bodyTooBig = guardBodyBytes(req.headers.get("content-length"));
   if (bodyTooBig) {
     return NextResponse.json({ error: bodyTooBig.error }, { status: GUARD_STATUS });
+  }
+
+  // Cost gate (workstream C): the Tier-2 path below spends a Gemini call, so the
+  // gate must run before runVerification() — and before the module load, which
+  // is the expensive DB work. Tier-1-only runs are free but gated uniformly.
+  try {
+    await assertBudget();
+  } catch (e) {
+    return NextResponse.json({ error: (e as Error).message }, { status: 429 });
   }
 
   const { id } = await params;

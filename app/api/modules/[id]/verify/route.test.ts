@@ -3,6 +3,7 @@ import { describe, expect, it, vi, beforeEach } from "vitest";
 import { verifyTier1 } from "@/src/lib/tier1";
 import { runVerification, runTargetedRepair } from "@/src/lib/verification";
 import { loadModuleForVerification } from "@/src/lib/moduleSources";
+import { assertBudget } from "@/src/lib/aiusage";
 import { POST as verifyPOST } from "./route";
 import { POST as repairPOST } from "../repair/route";
 import type { LoadedModule } from "@/src/lib/moduleSources";
@@ -10,6 +11,12 @@ import { prisma } from "@/src/lib/prisma";
 
 vi.mock("@/src/lib/moduleSources", () => ({
   loadModuleForVerification: vi.fn(),
+}));
+
+vi.mock("@/src/lib/aiusage", () => ({
+  logAIUsage: vi.fn(async () => {}),
+  // Cost guard: passes by default so the paid Tier-2 path stays testable.
+  assertBudget: vi.fn(async () => {}),
 }));
 
 vi.mock("@/src/lib/verification", async (importOriginal) => {
@@ -86,6 +93,20 @@ describe("/api/modules/:id/verify", () => {
     expect((runVerification as any).mock.calls[0][2].tier2).toBe(true);
     const json = await res.json();
     expect(json.tier2Ran).toBe(true);
+  });
+
+  it("returns 429 (no Gemini spend) when the budget is blocked", async () => {
+    const budget = assertBudget as unknown as ReturnType<typeof vi.fn>;
+    budget.mockRejectedValueOnce(new Error("Anggaran AI harian sudah habis: ..."));
+    vi.mocked(loadModuleForVerification).mockResolvedValue(loaded());
+    const res = await verifyPOST(
+      new Request("http://localhost/x", { method: "POST", body: JSON.stringify({ tier2: true }) }),
+      { params: Promise.resolve({ id: "m1" }) },
+    );
+    expect(res.status).toBe(429);
+    expect(runVerification).not.toHaveBeenCalled();
+    const json = (await res.json()) as { error: string };
+    expect(json.error.toLowerCase()).toContain("anggaran");
   });
 });
 

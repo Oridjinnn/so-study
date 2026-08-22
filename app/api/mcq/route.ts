@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { generate } from "@/src/lib/gemini";
 import { generateMCQ } from "@/src/lib/mcq";
-import { logAIUsage } from "@/src/lib/aiusage";
+import { logAIUsage, assertBudget } from "@/src/lib/aiusage";
 import type { MCQQuestion } from "@/app/lib/types";
 import {
   GUARD_STATUS,
@@ -99,6 +99,14 @@ export async function POST(req: NextRequest) {
   );
   if (violation) {
     return NextResponse.json({ error: violation.error }, { status: GUARD_STATUS });
+  }
+
+  // Cost gate (workstream C): the LLM branch below is the only paid path, but we
+  // check up front so a blocked budget returns 429 before any generation.
+  try {
+    await assertBudget();
+  } catch (e) {
+    return NextResponse.json({ error: (e as Error).message }, { status: 429 });
   }
 
   const count = Math.min(Math.max(Number(body.count) || 8, 1), 12);

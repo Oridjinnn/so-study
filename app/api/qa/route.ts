@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { embedTexts, generate } from "@/src/lib/gemini";
-import { logAIUsage } from "@/src/lib/aiusage";
+import { logAIUsage, assertBudget } from "@/src/lib/aiusage";
 import { prisma } from "@/src/lib/prisma";
 import { rankChunks, rankChunksHybrid, type RankableChunk } from "@/src/lib/retrieval";
 import {
@@ -41,6 +41,15 @@ export async function POST(req: NextRequest) {
   const question = body.question?.trim();
   if (!question) {
     return NextResponse.json({ error: "Field 'question' is required." }, { status: 400 });
+  }
+
+  // Cost gate (workstream C): never spend a Gemini call past the hard budget cap.
+  // Must run BEFORE the first paid call, which here is embedTexts() during RAG
+  // retrieval — so it sits above the moduleId branch, not below the field guards.
+  try {
+    await assertBudget();
+  } catch (e) {
+    return NextResponse.json({ error: (e as Error).message }, { status: 429 });
   }
 
   // Resolve the RAG context. Preferred path: server-side retrieval from the

@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { generate } from "@/src/lib/gemini";
-import { logAIUsage } from "@/src/lib/aiusage";
+import { logAIUsage, assertBudget } from "@/src/lib/aiusage";
 import { prisma } from "@/src/lib/prisma";
 import { mcqHelpers } from "@/src/lib/mcq";
 import { countWords, estimatePagesFromWords } from "@/src/lib/pages";
@@ -43,6 +43,14 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   const bodyTooBig = guardBodyBytes(req.headers.get("content-length"));
   if (bodyTooBig) {
     return NextResponse.json({ error: bodyTooBig.error }, { status: GUARD_STATUS });
+  }
+
+  // Cost gate (workstream C): runTargetedRepair() below spends Gemini calls, so
+  // the gate must run before it — and before the module load (expensive DB work).
+  try {
+    await assertBudget();
+  } catch (e) {
+    return NextResponse.json({ error: (e as Error).message }, { status: 429 });
   }
 
   const { id } = await params;

@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { embedTexts, generate, streamGenerate, type GeminiResult, type GeminiUsage } from "@/src/lib/gemini";
-import { logAIUsage } from "@/src/lib/aiusage";
+import { logAIUsage, assertBudget } from "@/src/lib/aiusage";
 import { SourcePaper } from "@/src/lib/sources";
 import { prisma } from "@/src/lib/prisma";
 import { ensureTopic } from "@/src/lib/topics";
@@ -205,6 +205,16 @@ export async function POST(req: NextRequest) {
   const titleTooLong = guardLength("title", "Judul topik", title, LIMITS.title);
   if (titleTooLong) {
     return NextResponse.json({ error: titleTooLong.error }, { status: GUARD_STATUS });
+  }
+
+  // Cost gate (workstream C): must run BEFORE the first paid call (generate /
+  // streamGenerate / embedTexts) AND before the topic-paper DB read below. It
+  // sits in front of both the streaming and non-streaming paths, so a blocked
+  // budget yields a clean 429 — never a half-open SSE stream.
+  try {
+    await assertBudget();
+  } catch (e) {
+    return NextResponse.json({ error: (e as Error).message }, { status: 429 });
   }
 
   let papers: SourcePaper[];

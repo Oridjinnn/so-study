@@ -9,12 +9,15 @@ vi.mock("@/src/lib/gemini", () => ({
 }));
 vi.mock("@/src/lib/aiusage", () => ({
   logAIUsage: vi.fn(async () => {}),
+  assertBudget: vi.fn(async () => {}),
 }));
 
 import { POST } from "./route";
 import { generate } from "@/src/lib/gemini";
+import { assertBudget } from "@/src/lib/aiusage";
 
 const gen = generate as unknown as ReturnType<typeof vi.fn>;
+const budget = assertBudget as unknown as ReturnType<typeof vi.fn>;
 
 function makeReq(body: unknown, contentLength?: string) {
   return {
@@ -26,6 +29,8 @@ function makeReq(body: unknown, contentLength?: string) {
 describe("POST /api/mcq (harness-first)", () => {
   beforeEach(() => {
     gen.mockReset();
+    budget.mockReset();
+    budget.mockResolvedValue(undefined);
   });
 
   it("rejects a missing module text with 400", async () => {
@@ -52,5 +57,16 @@ describe("POST /api/mcq (harness-first)", () => {
     expect(res.status).toBe(200);
     const body = (await res.json()) as { generatedBy: string };
     expect(body.generatedBy).toBe("fallback");
+  });
+
+  it("returns 429 with no Gemini call when the budget is blocked", async () => {
+    budget.mockRejectedValue(new Error("Anggaran AI harian sudah habis: ..."));
+    const res = await POST(
+      makeReq({ text: "Habitus adalah disposisi terinternalisasi bourdieu.", count: 2, useLLM: true }),
+    );
+    expect(res.status).toBe(429);
+    expect(gen).not.toHaveBeenCalled();
+    const body = (await res.json()) as { error: string };
+    expect(body.error.toLowerCase()).toContain("anggaran");
   });
 });
