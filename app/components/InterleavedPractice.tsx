@@ -9,6 +9,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import type { QuestionBankItem } from "../lib/types";
+import { apiFetch } from "../lib/api";
 import MCQOptions from "./MCQOptions";
 import ReviewGrader, { GRADE_CONFIDENCE, type ReviewGrade } from "./ReviewGrader";
 
@@ -85,7 +86,7 @@ async function recordAttempt(
 ): Promise<void> {
   if (!item.moduleId || !item.topicId) return;
   try {
-    await fetch("/api/attempts", {
+    await apiFetch("/api/attempts", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -123,7 +124,7 @@ export default function InterleavedPractice({ courseId }: Props) {
 
   useEffect(() => {
     let cancelled = false;
-    fetch(`/api/questions?courseId=${encodeURIComponent(courseId)}`)
+    apiFetch(`/api/questions?courseId=${encodeURIComponent(courseId)}`)
       .then((r) => r.json())
       .then((data: { items?: QuestionBankItem[]; error?: string }) => {
         if (cancelled) return;

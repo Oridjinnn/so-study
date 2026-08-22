@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import Modal from "./Modal";
 import DataBackup from "./DataBackup";
+import AccountBar from "./AccountBar";
 import type { CourseSummary } from "../lib/types";
 
 /** localStorage key holding the *explicit* theme choice; absent = follow the OS. */
@@ -178,6 +179,7 @@ export default function Sidebar({
           {onBatchImport && <BatchImportButton onClick={onBatchImport} />}
           <ThemeToggle />
           <DataBackup />
+          <AccountBar />
         </div>
         <nav className="flex-1 space-y-2 overflow-y-auto px-2 pb-4">
           <CourseList
@@ -237,6 +239,7 @@ export default function Sidebar({
             </nav>
             <ThemeToggle />
             <DataBackup />
+            <AccountBar />
           </div>
         </Modal>
       )}

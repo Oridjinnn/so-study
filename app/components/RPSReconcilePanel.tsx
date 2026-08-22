@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState, type ChangeEvent } from "react";
 import Modal from "./Modal";
 import type { RPSDiffRow, RPSState } from "../lib/types";
+import { apiFetch } from "../lib/api";
 import { extractPdfText } from "../lib/pdfExtract";
 
 /**
@@ -61,7 +62,7 @@ export default function RPSReconcilePanel({
     setLoading(true);
     setError(null);
     try {
-      const res = await fetch(`/api/rps/${encodeURIComponent(courseId)}`);
+      const res = await apiFetch(`/api/rps/${encodeURIComponent(courseId)}`);
       const data = await res.json();
       if (!res.ok) throw new Error(data.error ?? `HTTP ${res.status}`);
       const next = data as RPSState;
@@ -95,7 +96,7 @@ export default function RPSReconcilePanel({
     setSaving(true);
     setError(null);
     try {
-      const res = await fetch(`/api/rps/${encodeURIComponent(courseId)}`, {
+      const res = await apiFetch(`/api/rps/${encodeURIComponent(courseId)}`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ officialOrder: draft }),

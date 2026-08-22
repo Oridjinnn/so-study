@@ -7,6 +7,7 @@
 
 import { useEffect, useState } from "react";
 import type { QuestionBankItem } from "../lib/types";
+import { apiFetch } from "../lib/api";
 import Modal from "./Modal";
 
 type Props = {
@@ -17,7 +18,7 @@ type Props = {
 };
 
 async function sendJSON<T>(url: string, method: string, body: unknown): Promise<T> {
-  const res = await fetch(url, {
+  const res = await apiFetch(url, {
     method,
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
@@ -49,7 +50,7 @@ export default function QuestionBank({ topicId, moduleId, reloadKey = 0 }: Props
 
   useEffect(() => {
     let cancelled = false;
-    fetch(`/api/questions?topicId=${encodeURIComponent(topicId)}`)
+    apiFetch(`/api/questions?topicId=${encodeURIComponent(topicId)}`)
       .then((r) => r.json())
       .then((data: { items?: QuestionBankItem[]; error?: string }) => {
         if (cancelled) return;

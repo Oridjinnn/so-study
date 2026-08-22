@@ -8,6 +8,7 @@ import {
   type KeyboardEvent,
 } from "react";
 import type { AssessmentAttempt, ModuleDetail, VerificationPayload } from "../lib/types";
+import { apiFetch } from "../lib/api";
 import { visibleTabIds } from "../lib/study";
 import Modal from "./Modal";
 import { hasTakenPretest } from "./PretestGate";
@@ -82,7 +83,7 @@ export default function Workspace({
   // of the detail for the sidebar, which does not change here).
   const reloadModule = useCallback(async () => {
     try {
-      const res = await fetch(`/api/modules/${detail.id}`);
+      const res = await apiFetch(`/api/modules/${detail.id}`);
       const d = (await res.json().catch(() => ({}))) as Partial<ModuleDetail>;
       if (!res.ok) return;
       if (typeof d.contentMarkdown === "string") setContent(d.contentMarkdown);
@@ -105,7 +106,7 @@ export default function Workspace({
 
   const loadAttempts = useCallback(async () => {
     try {
-      const res = await fetch(
+      const res = await apiFetch(
         `/api/attempts?moduleId=${encodeURIComponent(detail.id)}&topicId=${encodeURIComponent(detail.topicId)}`,
       );
       const data = (await res.json().catch(() => ({}))) as { attempts?: AssessmentAttempt[] };
@@ -151,7 +152,7 @@ export default function Workspace({
 
   async function postJSON(url: string, body: unknown) {
     setError(null);
-    const res = await fetch(url, {
+    const res = await apiFetch(url, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body),
@@ -163,7 +164,7 @@ export default function Workspace({
 
   async function delJSON(url: string, body: unknown) {
     setError(null);
-    const res = await fetch(url, {
+    const res = await apiFetch(url, {
       method: "DELETE",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body),

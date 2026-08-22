@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { isStandalone } from "../lib/standalone";
+import { apiFetch } from "../lib/api";
 
 const DISMISS_KEY = "so-study:push-optin-dismissed";
 
@@ -96,7 +97,7 @@ export default function PushOptIn() {
       const endpoint = sub.endpoint;
       const p256dh = arrayBufferToBase64url(sub.getKey("p256dh") as ArrayBuffer);
       const auth = arrayBufferToBase64url(sub.getKey("auth") as ArrayBuffer);
-      const res = await fetch("/api/push/subscribe", {
+      const res = await apiFetch("/api/push/subscribe", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ endpoint, keys: { p256dh, auth }, studentName: readStudentName() }),

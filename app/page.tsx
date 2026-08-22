@@ -25,6 +25,7 @@ import PushOptIn from "./components/PushOptIn";
 import { SynthesisSkeleton } from "./components/Skeletons";
 import ErrorBoundary from "./components/ErrorBoundary";
 import Modal from "./components/Modal";
+import { apiFetch } from "./lib/api";
 
 interface ReviewState {
   topicId: string;
@@ -93,7 +94,7 @@ export default function Home() {
 
   const refreshCourses = useCallback(async () => {
     try {
-      const res = await fetch("/api/courses");
+      const res = await apiFetch("/api/courses");
       const data = await res.json();
       if (!res.ok) throw new Error(data.error ?? `HTTP ${res.status}`);
       setCourses(data.courses ?? []);
@@ -133,7 +134,7 @@ export default function Home() {
     let cancelled = false;
     (async () => {
       try {
-        const res = await fetch(`/api/progress?courseId=${encodeURIComponent(activeCourseId)}`);
+        const res = await apiFetch(`/api/progress?courseId=${encodeURIComponent(activeCourseId)}`);
         if (!res.ok) return;
         const data = (await res.json()) as ProgressData;
         if (!cancelled) setProgress(data);
@@ -151,7 +152,7 @@ export default function Home() {
     setError(null);
     setStatus("Membuka modul…");
     try {
-      const res = await fetch(`/api/modules/${id}`);
+      const res = await apiFetch(`/api/modules/${id}`);
       const d = await res.json();
       if (!res.ok) throw new Error(d.error ?? `HTTP ${res.status}`);
       setDetail(d);
@@ -189,7 +190,7 @@ export default function Home() {
           ? { name: existingName ?? name, major }
           : { name, major };
         if (!body.name) return courseId;
-        const res = await fetch("/api/courses", {
+        const res = await apiFetch("/api/courses", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify(body),
@@ -216,7 +217,7 @@ export default function Home() {
       setStatus("Mencari paper untuk topik ini…");
       try {
         const resolvedCourseId = await ensureCourseId(courseId, courseName, courseMajor);
-        const res = await fetch("/api/retrieve", {
+        const res = await apiFetch("/api/retrieve", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
@@ -254,7 +255,7 @@ export default function Home() {
       setError(null);
       setStatus("Menyimpan persetujuan paper…");
       try {
-        const patch = await fetch(`/api/papers/${topicId}`, {
+        const patch = await apiFetch(`/api/papers/${topicId}`, {
           method: "PATCH",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ approvedPaperIds: approvedIds }),
@@ -270,7 +271,7 @@ export default function Home() {
         );
         setSynthesizing(true);
         setStatus("Menyusun modul dari paper yang Anda setujui…");
-        const res = await fetch("/api/synthesize", {
+        const res = await apiFetch("/api/synthesize", {
           method: "POST",
           // Asking for SSE is the only difference from before: the route keeps
           // answering plain JSON for any client that does not read streams, so
@@ -398,7 +399,7 @@ export default function Home() {
       setError(null);
       setStatus("Memuat paper kandidat…");
       try {
-        const res = await fetch(`/api/papers/${t.id}`);
+        const res = await apiFetch(`/api/papers/${t.id}`);
         const data = await res.json();
         if (!res.ok) throw new Error(data.error ?? `HTTP ${res.status}`);
         setReview({ topicId: t.id, title: t.title, papers: data.papers, courseId: t.courseId });
@@ -422,7 +423,7 @@ export default function Home() {
       setError(null);
       setStatus(`Menghapus topik ${t.title}…`);
       try {
-        const res = await fetch(`/api/topics/${t.id}`, { method: "DELETE" });
+        const res = await apiFetch(`/api/topics/${t.id}`, { method: "DELETE" });
         const data = await res.json().catch(() => ({}));
         if (!res.ok) throw new Error(data.error ?? `HTTP ${res.status}`);
         setStatus(`Topik "${t.title}" dihapus.`);
@@ -439,7 +440,7 @@ export default function Home() {
 
   const openUsage = useCallback(async () => {
     try {
-      const res = await fetch("/api/usage");
+      const res = await apiFetch("/api/usage");
       const data = await res.json();
       setUsage(data.usage ?? []);
       setUsageOpen(true);

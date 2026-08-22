@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { splitCourseNames } from "./CourseBatchImport";
+import { apiFetch } from "../lib/api";
 
 const PROFILE_KEY = "soso.profile";
 
@@ -77,7 +78,7 @@ export default function SosoOnboarding({ onFinished }: { onFinished: () => void 
     setBusy(true);
     setError(null);
     try {
-      const res = await fetch("/api/courses", {
+      const res = await apiFetch("/api/courses", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ names, major: major.trim() || undefined }),

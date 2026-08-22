@@ -1,6 +1,7 @@
 "use client";
 
 import { useRef, useState } from "react";
+import { apiFetch } from "../lib/api";
 
 const LAST_EXPORT_KEY = "so-study:lastBackupExport";
 
@@ -28,7 +29,7 @@ export default function DataBackup() {
   async function handleExport() {
     setStatus({ kind: "busy" });
     try {
-      const res = await fetch("/api/backup", { method: "GET" });
+      const res = await apiFetch("/api/backup", { method: "GET" });
       if (!res.ok) throw new Error(`GET /api/backup → ${res.status}`);
       const blob = await res.blob();
       const url = URL.createObjectURL(blob);
@@ -65,7 +66,7 @@ export default function DataBackup() {
     try {
       const text = await file.text();
       const payload = JSON.parse(text);
-      const res = await fetch("/api/backup", {
+      const res = await apiFetch("/api/backup", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ ...payload, confirm: "overwrite" }),

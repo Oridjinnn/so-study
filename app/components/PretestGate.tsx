@@ -16,6 +16,7 @@
 
 import { useEffect, useState } from "react";
 import type { QuestionBankItem } from "../lib/types";
+import { apiFetch } from "../lib/api";
 import MCQOptions from "./MCQOptions";
 
 /** How many prequestions to draw from the topic's bank. */
@@ -75,7 +76,7 @@ export default function PretestGate({
 
   useEffect(() => {
     let cancelled = false;
-    fetch(`/api/questions?topicId=${encodeURIComponent(topicId)}`)
+    apiFetch(`/api/questions?topicId=${encodeURIComponent(topicId)}`)
       .then((r) => r.json())
       .then((data: { items?: QuestionBankItem[]; error?: string }) => {
         if (cancelled) return;

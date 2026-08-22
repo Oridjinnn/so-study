@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import type { GaugeBand, VerificationPayload } from "../lib/types";
+import { apiFetch } from "../lib/api";
 import { bandLabel } from "@/src/lib/gauge";
 import { MAX_REPAIR_ATTEMPTS } from "@/src/lib/repair";
 import { CHIP_CLASS } from "./ui";
@@ -91,7 +92,7 @@ export default function ReliabilityGauge({
     setBusy(kind);
     setNote(null);
     try {
-      const res = await fetch(url, {
+      const res = await apiFetch(url, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(body),

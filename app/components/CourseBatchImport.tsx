@@ -2,6 +2,7 @@
 
 import { useMemo, useState } from "react";
 import Modal from "./Modal";
+import { apiFetch } from "../lib/api";
 
 /**
  * Batch semester import (ROADMAP Phase 1: "Multi-course batch import").
@@ -50,7 +51,7 @@ export default function CourseBatchImport({
     setBusy(true);
     setError(null);
     try {
-      const res = await fetch("/api/courses", {
+      const res = await apiFetch("/api/courses", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ names, major: major.trim() || undefined }),

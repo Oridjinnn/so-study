@@ -13,6 +13,7 @@
 import { useCallback, useEffect, useState } from "react";
 import type { AssessmentAttempt } from "@/app/lib/types";
 import type { SchedulerState } from "@/src/lib/scheduler";
+import { apiFetch } from "@/app/lib/api";
 import ReviewGrader, { GRADE_CONFIDENCE, gradeRecalled, type ReviewGrade } from "./ReviewGrader";
 
 type Item = AssessmentAttempt;
@@ -49,7 +50,7 @@ export default function ReviewQueue({
     setLoading(true);
     setError(null);
     try {
-      const res = await fetch(
+      const res = await apiFetch(
         `/api/attempts?due=1&moduleId=${encodeURIComponent(moduleId)}&topicId=${encodeURIComponent(topicId)}`,
       );
       const data = (await res.json().catch(() => ({}))) as { attempts?: Item[] };
@@ -83,7 +84,7 @@ export default function ReviewQueue({
     setError(null);
     setStatus("Menyimpan ulangan…");
     try {
-      const res = await fetch("/api/attempts", {
+      const res = await apiFetch("/api/attempts", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
