@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import Workspace from "./Workspace";
-import type { ModuleDetail } from "../lib/types";
+import type { ModuleDetail, VerificationPayload } from "../lib/types";
 
 // The practice sub-panels each fetch on mount and are covered by their own
 // behaviour; stub them so this suite tests the Workspace shell's invariants
@@ -604,5 +604,57 @@ describe("Workspace module management", () => {
 
     expect(screen.getByText("v1")).toBeInTheDocument();
     expect(screen.getByText("initial synthesis")).toBeInTheDocument();
+  });
+});
+
+describe("Workspace grounding block (Tier 1 hard gate)", () => {
+  const blockedDetail = detailFixture({
+    verification: {
+      tier1: {
+        passed: false,
+        blocked: true,
+        citations: { total: 1, valid: 0, phantom: 1 },
+        claims: { total: 1, uncited: 0, ratio: 0, threshold: 0.3, overThreshold: false },
+        entities: { checked: 0, mismatched: 0 },
+        findings: [],
+      },
+      critic: null,
+      gauge: {
+        score: 0,
+        band: "gagal",
+        blocked: true,
+        breakdown: {
+          citationsTotal: 1, citationsValid: 0, citationsPhantom: 1,
+          claimsTotal: 1, uncitedClaims: 0, uncitedRatio: 0, uncitedThreshold: 0.3,
+          uncitedOverThreshold: false, entitiesChecked: 0, entitiesMismatched: 0,
+          criticRan: false, criticJudged: 0, criticSupported: 0, criticUncertain: 0,
+          criticContradicted: 0, aiFlagged: 0,
+        },
+        breakdownLines: ["Sitasi hantu: 1"],
+        caveat: "c",
+        flagCount: 1,
+      },
+      verifiedAt: null,
+      repairAttempts: 0,
+    } as unknown as VerificationPayload,
+  });
+
+  it("withholds the reader, Q&A and practice when a phantom citation is found", async () => {
+    const user = userEvent.setup();
+    render(<Workspace detail={blockedDetail} online={false} />);
+
+    // Reader body is withheld, not shown.
+    expect(screen.getByText(/Isi modul ditahan/i)).toBeInTheDocument();
+
+    // Q&A tab is gated too.
+    await user.click(screen.getByRole("tab", { name: "Tanya" }));
+    expect(screen.getByText(/Tanya ditahan/i)).toBeInTheDocument();
+
+    // Practice tab is gated too.
+    await user.click(screen.getByRole("tab", { name: "Latihan" }));
+    expect(screen.getByText(/Latihan ditahan/i)).toBeInTheDocument();
+
+    // Exports are withheld (disabled spans, not real download links).
+    expect(screen.queryByRole("link", { name: /Markdown/ })).not.toBeInTheDocument();
   });
 });

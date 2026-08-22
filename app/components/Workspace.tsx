@@ -473,35 +473,67 @@ export default function Workspace({
           />
         ))}
 
-      {tab === "ask" && (
-        <AskStep
-          detail={detail}
-          online={online}
-          postJSON={postJSON}
-          recallDone={recallDone}
-          onRecallDone={setRecallDone}
-          onError={setError}
-          onStatus={setStatus}
-        />
-      )}
+      {tab === "ask" &&
+        (blocked ? (
+          <div
+            id="panel-ask"
+            role="tabpanel"
+            aria-labelledby="tab-ask"
+            className="space-y-3"
+          >
+            <div
+              role="alert"
+              className="rounded-card border border-red-300 bg-red-50 px-3 py-2 text-sm text-red-800 dark:border-red-800 dark:bg-red-950/40 dark:text-red-300"
+            >
+              Tanya ditahan sampai sitasi hantu diperbaiki di tab Sumber (gerbang deterministik
+              Tahap 1, bukan penilaian AI).
+            </div>
+          </div>
+        ) : (
+          <AskStep
+            detail={detail}
+            online={online}
+            postJSON={postJSON}
+            recallDone={recallDone}
+            onRecallDone={setRecallDone}
+            onError={setError}
+            onStatus={setStatus}
+          />
+        ))}
 
-      {tab === "test" && (
-        <PracticeStep
-          detail={detail}
-          online={online}
-          courseId={courseId}
-          closedBook={closedBook}
-          setClosedBook={setClosedBook}
-          stats={stats}
-          attempts={attempts}
-          attemptsLoading={attemptsLoading}
-          recordAttempts={recordAttempts}
-          onGraded={() => void loadAttempts()}
-          postJSON={postJSON}
-          onError={setError}
-          onStatus={setStatus}
-        />
-      )}
+      {tab === "test" &&
+        (blocked ? (
+          <div
+            id="panel-test"
+            role="tabpanel"
+            aria-labelledby="tab-test"
+            className="space-y-3"
+          >
+            <div
+              role="alert"
+              className="rounded-card border border-red-300 bg-red-50 px-3 py-2 text-sm text-red-800 dark:border-red-800 dark:bg-red-950/40 dark:text-red-300"
+            >
+              Latihan ditahan sampai sitasi hantu diperbaiki di tab Sumber (gerbang deterministik
+              Tahap 1, bukan penilaian AI).
+            </div>
+          </div>
+        ) : (
+          <PracticeStep
+            detail={detail}
+            online={online}
+            courseId={courseId}
+            closedBook={closedBook}
+            setClosedBook={setClosedBook}
+            stats={stats}
+            attempts={attempts}
+            attemptsLoading={attemptsLoading}
+            recordAttempts={recordAttempts}
+            onGraded={() => void loadAttempts()}
+            postJSON={postJSON}
+            onError={setError}
+            onStatus={setStatus}
+          />
+        ))}
 
       {tab === "sources" && (
         <section id="panel-sources" role="tabpanel" aria-labelledby="tab-sources" className="space-y-6">
