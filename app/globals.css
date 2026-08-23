@@ -251,6 +251,36 @@ body {
   animation: soso-fade 300ms ease-out;
 }
 
+/* Native screen transitions (View Transitions API, driven by
+   app/lib/viewTransition.ts: module open/close, course switch, Workspace tab
+   switches, onboarding steps).
+
+   Zero dependency on purpose — a single-user PWA that installs on an iPad should
+   not pay framer-motion's bundle weight for a cross-fade Safari 18 and Chrome do
+   natively. Unsupported browsers simply swap the DOM; nothing is blocked on it.
+
+   180ms is polish, not decoration: long enough to read as a transition, short
+   enough that repeatedly switching tabs never feels slower than not animating.
+   The default UA cross-fade is what we want, so only the duration is set. */
+@media (prefers-reduced-motion: no-preference) {
+  ::view-transition-old(root),
+  ::view-transition-new(root) {
+    animation-duration: 180ms;
+    animation-timing-function: ease;
+  }
+}
+
+/* Vestibular safety: the global reduced-motion guard above cannot reach
+   ::view-transition pseudo-elements, so they are disabled explicitly. The state
+   change still happens — only the animation is dropped. */
+@media (prefers-reduced-motion: reduce) {
+  ::view-transition-group(*),
+  ::view-transition-old(*),
+  ::view-transition-new(*) {
+    animation: none !important;
+  }
+}
+
 /* Manual print fallback (roadmap Phase 3). The primary PDF export is now
    generated server-side at /api/modules/[id]/export?format=pdf (no print
    dialog, works directly on iPad Safari). These @media print rules remain as a

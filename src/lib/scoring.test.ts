@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import {
   APPROVAL_MIN_COUNT,
   defaultApprovedIndices,
+  internationalQuotaForMajor,
   isInternationalJournal,
   relevanceScore,
   selectShortlist,
@@ -126,6 +127,33 @@ describe("isInternationalJournal", () => {
   it("counts an English/other-language DOAJ journal as international", () => {
     expect(isInternationalJournal({ type: "journal", venue: "Springer", language: "en" })).toBe(true);
     expect(isInternationalJournal({ type: "journal", venue: "Revue", language: "fr" })).toBe(true);
+  });
+});
+
+describe("internationalQuotaForMajor (Bug 2 — non-blocking gate)", () => {
+  it("requires 2 international journals only for international/comparative majors", () => {
+    expect(internationalQuotaForMajor("Hukum Internasional")).toBe(2);
+    expect(internationalQuotaForMajor("Hubungan Internasional")).toBe(2);
+    expect(internationalQuotaForMajor("Politik Komparatif")).toBe(2);
+  });
+  it("requires 0 for domestic majors so relevant domestic papers are kept", () => {
+    expect(internationalQuotaForMajor("Hukum Tata Negara")).toBe(0);
+    expect(internationalQuotaForMajor("Antropologi")).toBe(0);
+    expect(internationalQuotaForMajor(undefined)).toBe(0);
+    expect(internationalQuotaForMajor(null)).toBe(0);
+  });
+  it("selectShortlist with quota 0 never forces international papers and never throws", () => {
+    const domestic = Array.from({ length: 10 }, (_, i) =>
+      ({ ...base, title: `Domestic ${i}`, type: "journal", venue: "Jurnal Lokal", language: "id", citationCount: 200 - i, year: 2018 })
+    );
+    const out = selectShortlist(domestic, ["structuralism"], {
+      minCount: 10,
+      maxCount: 10,
+      minInternational: 0,
+    });
+    expect(out.length).toBe(10);
+    // No international journals forced in: the gate is informational, not blocking.
+    expect(out.filter((p) => isInternationalJournal(p)).length).toBe(0);
   });
 });
 

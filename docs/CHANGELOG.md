@@ -13,6 +13,219 @@ Format per entry:
 
 ---
 
+## [2026-08-23 | 23:56 WIB | Sunday | 23 August 2026]
+
+Quality pass: corrupted "key concepts" export (root cause + regression pins),
+non-blocking international-journal signal, real PDF export split, visible loading
+states, and native screen transitions. Grouped by defect.
+
+### BUG 1 — corrupted "key concepts" in every export surface (severe, user-facing)
+
+- BEFORE (real exported PDF, topic "Tingkatan aktor dan level hukum yang terikat
+  pada aktor" — three surfaces, one root cause):
+  1. Petunjuk belajar (PDF intro): `…Dalam penataan ranah Hubungan, Aktor
+     Bersenjata Selain Negara, Aktor Pemerintah dan Organisasi, Birokrat Tingkat
+     Tapak (*Street,` — a comma-joined list of mid-sentence fragments, the last
+     one cut mid-word INSIDE an unclosed markdown bold marker.
+  2. Essay 5W1H "Bagaimana": `Bagaimana Setelah membaca modul ini,, Topik
+     "Tingkatan Aktor dan, Dalam penataan ranah Hubungan, Aktor Bersenjata Selain
+     Negara diaplikasikan dan dihubungkan antar sumber?`
+  3. Rubric criterion: `Menafsirkan konsep kunci 'Setelah membaca modul ini,'
+     secara akurat (bukan sekadar menyebut).` — the student was asked to
+     interpret a TEMPLATE sentence as if it were a course concept.
+- AFTER: concepts for the same module shape are clean terms —
+  `Aktor Bersenjata Selain Negara`, `Birokrat Tingkat Tapak`,
+  `Level Hukum Domestik` — and the template lead-in never appears anywhere.
+- ROOT CAUSE (confirmed): three consumers each had their own ad-hoc miner that
+  (a) split on punctuation, (b) sliced to a fixed character length with no regard
+  for word or markdown boundaries, and (c) treated the module's own template
+  scaffolding as content. `Setelah membaca modul ini, kamu bisa: …` is emitted by
+  the synthesis template itself (app/api/synthesize/route.ts, structure item 1),
+  so it is a knowable, filterable string — never model content.
+- FILE: src/lib/concepts.ts (lines 1–250, new) — ONE source of truth for key
+  concepts, consumed by all three surfaces. `stripModuleBoilerplate` (lines
+  89–98) drops whole template sections (Tujuan Pembelajaran / Petunjuk belajar /
+  Ringkasan) BEFORE mining; `headingLevel` (149) + `extractKeyConcepts`
+  (196–250) read the section's `### Nama Konsep` sub-headings — which is how the
+  synthesis contract actually writes concepts, one sub-section per concept — and
+  fall back to the section intro prose for flatter/older modules;
+  `sanitizeConcept` (163) enforces the sanity filter (length window, no filler
+  lead-in, no unbalanced `* _ [ (`), and `termSide`/`toAtoms` keep only the term
+  side of "term — penjelasan" / "term adalah …". No candidate is ever cut
+  mid-word: clamping is by whole words, and parenthetical glosses
+  (`(*Street-Level Bureaucrat*)`) are dropped whole rather than sliced.
+- FILE: src/lib/essay.ts (lines 10–11, 197–210, edited) — the essay prompt and
+  the rubric now delegate to `extractKeyConcepts`; the local miner and the
+  `mcqHelpers.extractClaims` fallback (which mined arbitrary prose sentences as
+  "concepts") are gone. Also drops the now-unused `mcqHelpers` import that was
+  left behind as a lint warning.
+- FILE: app/lib/pdfExtract.ts (lines 10, 20–68, edited) — `analyzeModuleContent`
+  delegates key concepts to the same function; only `keyArguments` is still read
+  from the module's Argumen section.
+- FILE: src/lib/concepts.test.ts (lines 1–149, new) — regression pins, two
+  fixtures. (1) The corrupted export's shape: no concept starts with
+  "Setelah"/"Dalam", no `Street`/`(*` fragment survives, and the essay question +
+  rubric never contain "Setelah membaca modul ini". (2) The REAL mandated `###`
+  structure: concepts are NON-EMPTY and contain the three real terms, explanation
+  body ("Contoh konkret:", "Pertanyaan refleksi:") is never mined, and all three
+  consumers (PDF intro via `deriveStudyGuidance`, essay question, rubric) are
+  asserted together.
+- WHY: I12 (doc/code sync) + the "fix it once at the source" rule — one root
+  cause with three consumers gets one fix, not three patches. The second fixture
+  exists because an intermediate version of this fix removed the garbage by
+  returning ZERO concepts for every real module (it stopped reading at the first
+  `###`), which silently deleted the concept list from the PDF intro, the essay
+  question and the rubric. A test that only asserts "no garbage" passes happily
+  on "no output"; both halves must be pinned.
+
+### BUG 2 — international-journal count was a rigid gate, now a signal
+
+- FILE: src/lib/scoring.ts (lines 42–60, edited) — new
+  `internationalQuotaForMajor(major)`: 2 for genuinely international/comparative
+  jurusan (`internasional`, `international`, `komparatif`, `comparative`,
+  `global`), otherwise 0.
+- FILE: src/lib/sources/index.ts (lines 14, 92–104, edited) — the shortlist's
+  `minInternational` is now that context-aware quota instead of a fixed 2, so a
+  domestic-literature topic keeps its most relevant Indonesian papers instead of
+  swapping two of them out for lower-relevance international ones.
+- FILE: app/components/PaperReview.tsx (lines 5–9, 24–35, 64–78, 100–114,
+  edited) — the amber "Jurnal internasional: n/2 — kurang" badge is replaced by a
+  neutral count plus an informational note ("… wajar untuk topik hukum domestik,
+  tapi cek relevansi lebih teliti"). Nothing blocks; `major` is threaded from
+  app/page.tsx.
+- FILE: src/lib/scoring.test.ts (lines 133–157, edited) — quota mapping per
+  major, and `selectShortlist` with quota 0 neither forces international papers
+  nor throws.
+- WHY: an Indonesian legal/bureaucratic topic legitimately draws on Indonesian
+  secondary literature; that is not a retrieval failure. The threshold is tied to
+  `major` rather than applied globally to every course.
+
+### CHANGE — the PDF export is now genuinely TWO files
+
+- FILE: src/lib/pdf.ts (lines 290–360 edited, 371–431 edited, 441–473 new) —
+  `generatePdf` (`?format=pdf`) is reading material ONLY: module body + grounding
+  sources, plus a one-line pointer to the worksheet. The essay question and
+  rubric were REMOVED from it. `generateWorksheetPdf` (`?format=pdf-worksheet`)
+  is the printable exercise sheet: study guidance, essay question with its 5W1H
+  list, and the rubric — no module body, no sources appendix. Both render through
+  one shared `renderPdf` shell (lines 296–369), so the ~90 lines of duplicated
+  pdfmake styles/header/footer are gone and the two files cannot drift apart
+  typographically.
+- FILE: src/lib/export.ts (lines 24, 263–292, edited) — `ExportFormat` gains
+  `pdf-worksheet` (extension, content type, `parseExportFormat`), and
+  `exportFilename` appends `-worksheet` so both files can be saved side by side.
+- FILE: app/api/modules/[id]/export/route.ts (lines 5, 92–96, 162–175, edited) —
+  routes the new format and updates the 400 message.
+- FILE: app/components/ReadStep.tsx (lines 136–152, edited) + app/components/
+  Workspace.tsx (lines 341–378, edited) — two distinct download buttons/chips
+  ("Unduh modul lengkap (PDF)" / "Unduh lembar kerja (PDF)"; "PDF modul" / "PDF
+  lembar kerja"). The OFFLINE branch of Workspace now renders all four export
+  labels from one list (lines 358–378) — it previously still said "PDF" and had
+  no worksheet chip, so the new download vanished offline and its own DOM test
+  failed.
+- FILE: app/api/modules/[id]/export/route.test.ts (lines 118–205, edited) — the
+  split is asserted in BOTH directions: `?format=pdf` contains the body + `[1]` +
+  the source title and NOT "Rubrik penilaian"/the essay question;
+  `?format=pdf-worksheet` contains the essay question + 5W1H + rubric sections
+  and NOT the module body or "Sumber (grounding)". Both are checked to start with
+  `%PDF-` (independently openable), and the two filenames are asserted distinct.
+- FILE: app/components/Workspace.dom.test.tsx (lines 513–541, edited) — online
+  links and offline chips both expect all four labels.
+
+### GAP 1 — retrieval/synthesis had no VISIBLE loading state
+
+- FILE: app/components/LoadingPanel.tsx (lines 1–100, new) — an overlay
+  `role="status" aria-live="polite" aria-busy="true"` panel (deliberately not a
+  focus-trapping dialog: nothing in it is actionable) with a spinner, a staged
+  label, stage dots and a skeleton of the screen being loaded. The label advances
+  every 2.5s and CLAMPS on the last stage (a looping label reads as a stall);
+  measured progress passed as `detail` always wins over the staged guess.
+- FILE: app/components/Skeletons.tsx (lines 32–52, new) — `PaperListSkeleton`,
+  shaped like the paper-review rows.
+- FILE: app/page.tsx (lines 25–26, 69–86, 88–95, 232–238, 264, 292, 374–378,
+  786–795, edited) — `retrieving` state is set in the SAME tick the composer
+  closes (before the `await`), so the panel is on screen instantly; stages mirror
+  the real server sequence ("Mencari paper…" → "Menilai relevansi…" → "Menyusun
+  daftar kandidat…" and "Membaca paper…" → "Menyusun modul…" → "Memeriksa sitasi
+  & akurasi…" → "Menyimpan modul…"). The synthesis SSE stream's character count
+  is now SHOWN (`synthDetail`), not only announced to screen readers.
+- FILE: app/components/LoadingPanel.dom.test.tsx (lines 1–69, new) +
+  app/page.dom.test.tsx (lines 68–128, new) — immediate render, aria-busy status
+  (not a dialog), staged advance + clamp, detail-over-stage precedence, interval
+  cleanup on unmount; and an end-to-end pin: with `/api/retrieve` hanging
+  forever, submitting a topic shows the visible panel (not just the `sr-only`
+  region, which is what the old build had and why it looked frozen).
+- WHY: a ~10s request that changes nothing on screen reads as broken, not slow.
+
+### GAP 2 — module generation speed: measured, and the premise corrected
+
+- FINDING (recorded per the verification requirement): there is NO per-paper
+  Gemini summarization loop to parallelize. app/api/synthesize/route.ts sends ONE
+  corpus-level synthesis call (all approved abstracts in a single prompt,
+  `maxOutputTokens: 8192`), then strictly DEPENDENT calls: up to 2 length
+  expansion passes + up to 3 completeness passes (src/lib/pages.ts), one essay
+  question, and the Tier 2 critic batches. Each of those needs the previous
+  text, so the wall clock is dominated by dependent AI calls and CANNOT be
+  parallelized without changing what the module is. The final combining call was
+  left serial, as required.
+- FILE: src/lib/concurrency.ts (lines 1–30, new) + src/lib/concurrency.test.ts
+  (lines 1–45, new) — `mapWithConcurrencyLimit`: dependency-free cap (no
+  `p-limit`), order-preserving, propagates the first rejection.
+- FILE: app/api/synthesize/route.ts (lines 18, 408–475, edited) — the one
+  genuinely independent per-paper loop, the DB writes (`paper.upsert` +
+  `topicPaper.upsert` per approved paper), now runs at concurrency 4 instead of
+  strictly sequentially.
+- MEASUREMENT (simulated at a 35ms round trip, DB latency only — no paid Gemini
+  calls were made for a benchmark): 4 papers 286ms → 74ms (3.8x, −0.21s);
+  10 papers 712ms → 213ms (3.3x, −0.50s). The concurrency cap itself is verified
+  by test ("never runs more than `limit` tasks concurrently").
+- HONEST CONCLUSION: this is a sub-second win on a multi-second operation. The
+  perceived-speed fix for generation is GAP 1's visible staged feedback, not this
+  parallelization. If generation must actually get faster, the next lever is the
+  expansion-pass budget (up to 5 extra dependent calls), not fan-out.
+
+### GAP 3 — screen transitions, zero new dependencies
+
+- FILE: app/lib/viewTransition.ts (lines 1–58, new) — `withViewTransition`,
+  `supportsViewTransitions`, `prefersReducedMotion`. Uses the native View
+  Transitions API (present in iPad Safari, the target device) and falls back to a
+  plain state update when it is missing, when the user asked for reduced motion,
+  or when the call throws. Contract: the update ALWAYS runs, exactly once — the
+  transition is decoration, the state change is the feature. No framer-motion:
+  bundle weight matters for an installed PWA.
+- FILE: app/components/Workspace.tsx (lines 12, 51–56, 242, 290, 406, 474,
+  edited) — every tab change goes through one `changeTab` helper (click, arrow
+  keys, and the two programmatic jumps to the Sumber tab).
+- FILE: app/components/SosoOnboarding.tsx (lines 4, 50–56, 66, 72, 161, 229,
+  edited) — wizard step changes cross-fade.
+- FILE: app/page.tsx (lines 29, 186–194, 573–579, 615, edited) — module open,
+  "← Kembali", and course switching.
+- FILE: app/globals.css (lines 240–271, new) — `::view-transition-old/new(root)`
+  at 180ms ease (short = polish, not decoration), plus an explicit reduced-motion
+  override, because the existing global `prefers-reduced-motion` guard cannot
+  reach view-transition pseudo-elements.
+- FILE: app/components/Modal.tsx (2 buttons) + app/components/ErrorBoundary.tsx
+  (1 button), edited — the only interactive colour-change surfaces still missing
+  `transition-*` now use `transition-colors duration-150`. A survey of every
+  `hover:` class string in app/ found the rest already transitioned; the
+  remaining un-transitioned ones are `hover:underline` links, where there is
+  nothing meaningful to animate.
+- FILE: app/lib/viewTransition.dom.test.tsx (lines 1–92, new) — absent API,
+  supported API, reduced motion, throwing API, and "never applies the update
+  twice (a toggle must not flip back)".
+
+### Housekeeping
+
+- FILE: src/lib/__probe.test.ts (deleted) — a leftover debug probe
+  (`expect(out).toBe("PRINT")`) importing a non-existent `buildStudyGuidance`. It
+  broke `npx tsc --noEmit` with TS2305 and would have failed as a test, i.e.
+  `npm run ci` was RED. Its purpose (inspecting the real `###` module shape) is
+  now covered properly by the second fixture in src/lib/concepts.test.ts.
+- WHY: rule I12 — every change logged with file + line locations; the
+  before/after strings above are recorded verbatim so a future contributor can
+  see WHY the boilerplate-stripping and the `###`-heading path exist, and does
+  not "simplify" either one back into the old defect.
+
 ## [2026-08-21 | 21:55 WIB | Friday | 21 August 2026]
 - CHANGE: CHANGELOG formatting-only reorder (no entry content altered, added, or
   deleted). All 50 `## [...]` entries were sorted into strict DESCENDING

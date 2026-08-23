@@ -9,6 +9,7 @@ import {
 } from "react";
 import type { AssessmentAttempt, ModuleDetail, VerificationPayload } from "../lib/types";
 import { apiFetch } from "../lib/api";
+import { withViewTransition } from "../lib/viewTransition";
 import { visibleTabIds } from "../lib/study";
 import Modal from "./Modal";
 import { hasTakenPretest } from "./PretestGate";
@@ -43,6 +44,15 @@ export default function Workspace({
   onModuleDeleted?: () => void;
 }) {
   const [tab, setTab] = useState<TabId>("read");
+
+  /**
+   * Tab changes cross-fade via the native View Transitions API when the browser
+   * has it (iPad Safari does) and swap instantly otherwise — see
+   * app/lib/viewTransition.ts for why this is not an animation library.
+   */
+  const changeTab = useCallback((next: TabId) => {
+    withViewTransition(() => setTab(next));
+  }, []);
   const [error, setError] = useState<string | null>(null);
   const [status, setStatus] = useState<string>("");
   const [citeTarget, setCiteTarget] = useState<number | null>(null);
@@ -229,7 +239,7 @@ export default function Workspace({
     else return;
     e.preventDefault();
     const nextId = visible[next];
-    setTab(nextId);
+    changeTab(nextId);
     tablistRef.current?.querySelector<HTMLButtonElement>(`#tab-${nextId}`)?.focus();
   }
 
@@ -277,7 +287,7 @@ export default function Workspace({
               explains it. */}
           <button
             type="button"
-            onClick={() => setTab("sources")}
+            onClick={() => changeTab("sources")}
             className={`rounded-full px-2 py-0.5 text-xs font-semibold print:hidden ${
               blocked
                 ? "bg-red-500/15 text-red-700 dark:text-red-300"
@@ -341,47 +351,39 @@ export default function Workspace({
               <a
                 href={`/api/modules/${detail.id}/export?format=pdf`}
                 download
-                title="Unduh modul sebagai PDF (dibuat di server)"
+                title="Unduh modul + sumber sebagai PDF (dibuat di server)"
                 className={`${CHIP_CLASS} inline-flex items-center`}
               >
-                PDF
+                PDF modul
+              </a>
+              <a
+                href={`/api/modules/${detail.id}/export?format=pdf-worksheet`}
+                download
+                title="Unduh lembar kerja: pertanyaan esai + rubrik (tanpa isi modul)"
+                className={`${CHIP_CLASS} inline-flex items-center`}
+              >
+                PDF lembar kerja
               </a>
             </>
           ) : (
             <>
-              <span
-                className={`${CHIP_CLASS} inline-flex cursor-not-allowed items-center opacity-50`}
-                title={
-                  blocked
-                    ? "Ekspor ditahan: ada sitasi hantu (Tahap 1 gagal). Perbaiki dulu di tab Sumber."
-                    : "Ekspor butuh internet. Sambungkan dulu."
-                }
-                aria-disabled="true"
-              >
-                Markdown
-              </span>
-              <span
-                className={`${CHIP_CLASS} inline-flex cursor-not-allowed items-center opacity-50`}
-                title={
-                  blocked
-                    ? "Ekspor ditahan: ada sitasi hantu (Tahap 1 gagal). Perbaiki dulu di tab Sumber."
-                    : "Ekspor butuh internet. Sambungkan dulu."
-                }
-                aria-disabled="true"
-              >
-                Anki
-              </span>
-              <span
-                className={`${CHIP_CLASS} inline-flex cursor-not-allowed items-center opacity-50`}
-                title={
-                  blocked
-                    ? "Ekspor ditahan: ada sitasi hantu (Tahap 1 gagal). Perbaiki dulu di tab Sumber."
-                    : "Ekspor butuh internet. Sambungkan dulu."
-                }
-                aria-disabled="true"
-              >
-                PDF
-              </span>
+              {/* Same four export targets as the online branch, as explained
+                  disabled chips — the labels must match one-for-one so the
+                  worksheet PDF does not silently vanish offline. */}
+              {["Markdown", "Anki", "PDF modul", "PDF lembar kerja"].map((label) => (
+                <span
+                  key={label}
+                  className={`${CHIP_CLASS} inline-flex cursor-not-allowed items-center opacity-50`}
+                  title={
+                    blocked
+                      ? "Ekspor ditahan: ada sitasi hantu (Tahap 1 gagal). Perbaiki dulu di tab Sumber."
+                      : "Ekspor butuh internet. Sambungkan dulu."
+                  }
+                  aria-disabled="true"
+                >
+                  {label}
+                </span>
+              ))}
             </>
           )}
         </div>
@@ -401,7 +403,7 @@ export default function Workspace({
               key={t.id}
               id={`tab-${t.id}`}
               type="button"
-              onClick={() => setTab(t.id)}
+              onClick={() => changeTab(t.id)}
               role="tab"
               aria-selected={tab === t.id}
               aria-controls={`panel-${t.id}`}
@@ -469,7 +471,7 @@ export default function Workspace({
             onPretestDone={() => setPretestDone(true)}
             onCite={(n) => {
               setCiteTarget(n);
-              setTab("sources");
+              changeTab("sources");
             }}
           />
         ))}

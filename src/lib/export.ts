@@ -21,7 +21,7 @@ import { analyzeModuleContent, deriveStudyGuidance } from "@/app/lib/pdfExtract"
 import { formatAPA } from "./citation";
 import type { PaperType } from "./sources/types";
 
-export type ExportFormat = "md" | "anki" | "pdf";
+export type ExportFormat = "md" | "anki" | "pdf" | "pdf-worksheet";
 
 /**
  * A structured, enum-lettered section of the essay rubric (A. Penulisan …,
@@ -260,25 +260,36 @@ export function toAnkiTSV(cards: ExportCard[], topicTitle: string): string {
   return lines.join("\n") + "\n";
 }
 
-const EXTENSIONS: Record<ExportFormat, string> = { md: "md", anki: "tsv", pdf: "pdf" };
+const EXTENSIONS: Record<ExportFormat, string> = {
+  md: "md",
+  anki: "tsv",
+  pdf: "pdf",
+  "pdf-worksheet": "pdf",
+};
 
 const CONTENT_TYPES: Record<ExportFormat, string> = {
   md: "text/markdown; charset=utf-8",
   anki: "text/tab-separated-values; charset=utf-8",
   pdf: "application/pdf",
+  "pdf-worksheet": "application/pdf",
 };
 
 /** Narrows an untrusted `?format=` query value. */
 export function parseExportFormat(value: string | null | undefined): ExportFormat | null {
-  return value === "md" || value === "anki" || value === "pdf" ? value : null;
+  return value === "md" || value === "anki" || value === "pdf" || value === "pdf-worksheet"
+    ? value
+    : null;
 }
 
 export function contentTypeFor(format: ExportFormat): string {
   return CONTENT_TYPES[format];
 }
 
-/** Deterministic, ASCII-safe download name: `so-study-<topic-slug>.<ext>`. */
+/** Deterministic, ASCII-safe download name: `so-study-<topic-slug>.<ext>`.
+ * The worksheet variant gets a `-worksheet` suffix so it is a distinct,
+ * independently-openable file from the module PDF. */
 export function exportFilename(topicTitle: string, format: ExportFormat): string {
   const slug = slugifyHeading(topicTitle) || "modul";
-  return `so-study-${slug}.${EXTENSIONS[format]}`;
+  const suffix = format === "pdf-worksheet" ? "-worksheet" : "";
+  return `so-study-${slug}${suffix}.${EXTENSIONS[format]}`;
 }

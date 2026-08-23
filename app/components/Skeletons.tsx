@@ -28,3 +28,26 @@ export function SynthesisSkeleton() {
     </div>
   );
 }
+
+/**
+ * Placeholder shaped like the paper-review list (title + meta line + abstract
+ * lines per candidate), shown while `/api/retrieve` is in flight. Retrieval
+ * takes ~10s; without this the UI looked frozen, which reads as broken rather
+ * than slow — the point is to show the SHAPE of what is coming, immediately.
+ */
+export function PaperListSkeleton({ rows = 3 }: { rows?: number }) {
+  return (
+    <div className="space-y-2" aria-hidden="true">
+      {Array.from({ length: rows }, (_, i) => (
+        <div key={i} className="rounded-xl border border-zinc-200 p-3 dark:border-zinc-700">
+          <div className="mb-2 h-4 w-4/5 animate-pulse rounded bg-zinc-200 dark:bg-zinc-800" />
+          <div className="mb-3 h-3 w-2/5 animate-pulse rounded bg-zinc-200/80 dark:bg-zinc-800/80" />
+          <div className="space-y-1.5">
+            <div className="h-3 w-full animate-pulse rounded bg-zinc-200/70 dark:bg-zinc-800/70" />
+            <div className="h-3 w-11/12 animate-pulse rounded bg-zinc-200/70 dark:bg-zinc-800/70" />
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}

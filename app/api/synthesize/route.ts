@@ -15,6 +15,7 @@ import {
 import { verifyTier1 } from "@/src/lib/tier1";
 import { runVerification } from "@/src/lib/verification";
 import { computeGauge, type GaugeResult } from "@/src/lib/gauge";
+import { mapWithConcurrencyLimit } from "@/src/lib/concurrency";
 import {
   GUARD_STATUS,
   LIMITS,
@@ -407,58 +408,71 @@ export async function POST(req: NextRequest) {
     // Grounding sources travel with the ids in the same order, so citation [n]
     // is checked against the paper it will actually resolve to on read.
     const sources: GroundingSource[] = [];
-    for (const p of papers) {
-      if (!p.sourceUrl) continue;
-      // Paper is GLOBAL and deliberately deduplicated across users: it is public
-      // bibliographic metadata keyed by `sourceUrl`, holds nothing private, and
-      // two students studying the same field SHOULD share the row. So the upsert
-      // stays unscoped and tenancy lives in the join (TopicPaper) below, whose
-      // topic is the caller's own.
-      const paper = await prisma.paper.upsert({
-        where: { sourceUrl: p.sourceUrl },
-        update: {
-          title: p.title,
-          authors: p.authors,
-          year: p.year,
-          abstract: p.abstract,
-          citationCount: p.citationCount,
-          relevanceScore: p.relevanceScore,
-          fullTextAvailable: p.fullTextAvailable,
-          doi: p.doi || null,
-          venue: p.venue || null,
-          volume: p.volume || null,
-          issue: p.issue || null,
-          pages: p.pages || null,
-          publisher: p.publisher || null,
-          type: p.type ?? null,
-          providers: p.provider,
-        },
-        create: {
-          title: p.title,
-          authors: p.authors,
-          year: p.year,
-          abstract: p.abstract,
-          sourceUrl: p.sourceUrl,
-          citationCount: p.citationCount,
-          relevanceScore: p.relevanceScore,
-          fullTextAvailable: p.fullTextAvailable,
-          doi: p.doi || null,
-          venue: p.venue || null,
-          volume: p.volume || null,
-          issue: p.issue || null,
-          pages: p.pages || null,
-          publisher: p.publisher || null,
-          type: p.type ?? null,
-          providers: p.provider,
-        },
-      });
-      paperIds.push(paper.id);
-      sources.push({ id: paper.id, title: p.title, text: p.abstract });
-      await prisma.topicPaper.upsert({
-        where: { topicId_paperId: { topicId: topic.id, paperId: paper.id } },
-        update: { approved: true },
-        create: { topicId: topic.id, paperId: paper.id, approved: true },
-      });
+
+    // The per-paper DB writes (paper upsert + topic-paper link) are independent
+    // of one another, so they run under a small concurrency cap rather than a
+    // fully sequential loop — a real wall-clock win on 2–4 paper topics. This is
+    // the ONLY safe parallelization: the Gemini calls above are inherently
+    // sequential (one corpus synthesis + dependent expansion passes), so the
+    // combining/synthesis step is deliberately left serial.
+    const written = await mapWithConcurrencyLimit(
+      papers.filter((p) => p.sourceUrl),
+      4,
+      async (p) => {
+        // Paper is GLOBAL and deliberately deduplicated across users: it is public
+        // bibliographic metadata keyed by `sourceUrl`, holds nothing private, and
+        // two students studying the same field SHOULD share the row. So the upsert
+        // stays unscoped and tenancy lives in the join (TopicPaper) below, whose
+        // topic is the caller's own.
+        const paper = await prisma.paper.upsert({
+          where: { sourceUrl: p.sourceUrl! },
+          update: {
+            title: p.title,
+            authors: p.authors,
+            year: p.year,
+            abstract: p.abstract,
+            citationCount: p.citationCount,
+            relevanceScore: p.relevanceScore,
+            fullTextAvailable: p.fullTextAvailable,
+            doi: p.doi || null,
+            venue: p.venue || null,
+            volume: p.volume || null,
+            issue: p.issue || null,
+            pages: p.pages || null,
+            publisher: p.publisher || null,
+            type: p.type ?? null,
+            providers: p.provider,
+          },
+          create: {
+            title: p.title,
+            authors: p.authors,
+            year: p.year,
+            abstract: p.abstract,
+            sourceUrl: p.sourceUrl!,
+            citationCount: p.citationCount,
+            relevanceScore: p.relevanceScore,
+            fullTextAvailable: p.fullTextAvailable,
+            doi: p.doi || null,
+            venue: p.venue || null,
+            volume: p.volume || null,
+            issue: p.issue || null,
+            pages: p.pages || null,
+            publisher: p.publisher || null,
+            type: p.type ?? null,
+            providers: p.provider,
+          },
+        });
+        await prisma.topicPaper.upsert({
+          where: { topicId_paperId: { topicId: topic.id, paperId: paper.id } },
+          update: { approved: true },
+          create: { topicId: topic.id, paperId: paper.id, approved: true },
+        });
+        return { id: paper.id, title: p.title, text: p.abstract };
+      },
+    );
+    for (const w of written) {
+      paperIds.push(w.id);
+      sources.push({ id: w.id, title: w.title, text: w.text });
     }
 
     // Post-generation faithfulness check (harness, not a model call): does every

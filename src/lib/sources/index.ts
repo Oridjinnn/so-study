@@ -11,7 +11,7 @@
 // Promise.allSettled. We only throw when EVERY provider failed (true offline),
 // matching the callers' "surface the failure, never fabricate" contract.
 
-import { relevanceScore, selectShortlist } from "@/src/lib/scoring";
+import { relevanceScore, selectShortlist, internationalQuotaForMajor } from "@/src/lib/scoring";
 import {
   dedupeAndMerge,
   type RetrieveOptions,
@@ -92,12 +92,15 @@ export async function retrieveSources(
 
   // selectShortlist returns the SAME objects we passed in, so mapping back is a
   // direct reference walk — no id tagging needed. The review presents exactly 10
-  // candidates, and the diversity guarantee ensures at least 2 are international
-  // journals (non-Indonesian) so the source pool stays internationally broad.
+  // candidates. The international-journal quota is context-aware: only genuinely
+  // international/comparative topics require 2 (see internationalQuotaForMajor);
+  // domestic-literature topics (Indonesian law, local bureaucracy) keep their
+  // relevant domestic papers instead of being forced to swap in lower-relevance
+  // international ones.
   const shortlist = selectShortlist(scored, terms, {
     minCount: 10,
     maxCount: 10,
-    minInternational: 2,
+    minInternational: internationalQuotaForMajor(opts.major),
   });
   return shortlist.map((p) => ({
     ...p,

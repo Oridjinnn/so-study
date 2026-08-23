@@ -288,73 +288,16 @@ function blocksToContent(markdown: string): Array<Record<string, unknown>> {
 }
 
 /**
- * Renders a module to a PDF `Buffer`. The document carries real hierarchy
- * (title → section headings → body), comfortable long-form spacing, a running
- * header/footer with the title and page numbers, and a grounding sources
- * appendix so the PDF reads correctly even outside the app.
+ * The shared A4 document shell: page geometry, the style sheet, the running
+ * header and the page footer. Both exports (reading PDF + worksheet PDF) render
+ * through this one shell, so a typographic change can never apply to only one of
+ * them — the split is a content split, never a styling fork.
  */
-export async function generatePdf(m: ExportModule): Promise<Uint8Array> {
-  const courses = m.courseNames.length ? m.courseNames.join(", ") : "belum masuk mata kuliah";
-  const meta = `${courses}  ·  dibuat ${isoDate(m.generatedAt)}`;
-
-  const content: Array<Record<string, unknown>> = [
-    { text: m.topicTitle, style: "title" },
-    { text: meta, style: "meta" },
-    rule(),
-  ];
-
-  // Derived study-guidance callout: frames recall/reasoning near the top so the
-  // PDF itself coaches the student, not just displays the module.
-  if (m.studyGuidance?.length) {
-    content.push(callout("Petunjuk belajar", m.studyGuidance));
-  }
-
-  content.push(...blocksToContent(m.contentMarkdown));
-
-  if (m.essayPrompt?.trim()) {
-    content.push(rule());
-    content.push(heading("Pertanyaan esai (recall)", "h2"));
-    content.push({ text: runsToFragments(parseInline(m.essayPrompt.trim())), style: "p" });
-    if (m.essayRubric?.trim()) {
-      content.push(heading("Rubrik penilaian", "h3"));
-      const sections = m.rubricSections ?? parseRubric(m.essayRubric);
-      if (sections.length) content.push(...rubricToContent(sections));
-      else content.push({ text: runsToFragments(parseInline(m.essayRubric.trim())), style: "p" });
-    }
-  }
-
-  // Grounding appendix: keeps the numbered `[n]` citations resolvable (I5).
-  content.push(rule());
-  content.push(heading("Sumber (grounding)", "h2"));
-  if (m.sourcePapers.length === 0) {
-    content.push({ text: "Modul ini belum mencatat paper sumber.", style: "p" });
-  } else {
-    m.sourcePapers.forEach((p, i) => {
-      const citations =
-        typeof p.citationCount === "number" && p.citationCount > 0
-          ? ` — ${p.citationCount} sitasi`
-          : "";
-      // One APA-7 reference string (src/lib/citation.ts), re-parsed through the
-      // shared inline markdown reader so its `*…*` runs (journal name / book
-      // title) render as real italics here exactly as they do in the Markdown
-      // export — the two exports cite identically (I5). The list number stays
-      // bold and outside the reference so `[n]` remains resolvable; the citation
-      // count is app metadata, so it stays small and muted.
-      content.push({
-        text: [
-          { text: `${i + 1}. `, bold: true },
-          ...runsToFragments(parseInline(formatAPA(p))),
-          ...(citations ? [{ text: citations, fontSize: 9, color: MUTED }] : []),
-        ],
-        style: "source",
-        margin: [0, 0, 0, 4],
-      });
-    });
-  }
-
-  content.push(rule());
-  content.push({ text: EXPORT_FOOTER_TEXT, style: "meta", margin: [0, 0, 0, 0] });
-
+function renderPdf(
+  topicTitle: string,
+  courses: string,
+  content: Array<Record<string, unknown>>,
+): Promise<Uint8Array> {
   const docDefinition = {
     pageSize: "A4" as const,
     pageMargins: [40, 56, 40, 48],
@@ -393,11 +336,11 @@ export async function generatePdf(m: ExportModule): Promise<Uint8Array> {
     header: (currentPage: number) =>
       currentPage === 1
         ? undefined
-        : { text: `${m.topicTitle}  ·  ${courses}`, style: "meta", margin: [40, 24, 40, 0] },
+        : { text: `${topicTitle}  ·  ${courses}`, style: "meta", margin: [40, 24, 40, 0] },
     footer: (currentPage: number, pageCount: number) => ({
       margin: [40, 0, 40, 20],
       columns: [
-        { text: `So-study — ${m.topicTitle}`, style: "meta" },
+        { text: `So-study — ${topicTitle}`, style: "meta" },
         { text: `Halaman ${currentPage} dari ${pageCount}`, style: "meta", alignment: "right" },
       ],
     }),
@@ -411,4 +354,121 @@ export async function generatePdf(m: ExportModule): Promise<Uint8Array> {
       reject(e);
     }
   });
+}
+
+/**
+ * Renders a module to a PDF `Buffer`. The document carries real hierarchy
+ * (title → section headings → body), comfortable long-form spacing, a running
+ * header/footer with the title and page numbers, and a grounding sources
+ * appendix so the PDF reads correctly even outside the app.
+ *
+ * READING MATERIAL ONLY: module body + sources. The essay question and the
+ * rubric deliberately do NOT appear here — they are a separate, printable
+ * download (`generateWorksheetPdf`, `?format=pdf-worksheet`), so the student can
+ * print the exercise sheet to write on without reprinting ten pages of module,
+ * and read the module without the assessment material interrupting it.
+ */
+export async function generatePdf(m: ExportModule): Promise<Uint8Array> {
+  const courses = m.courseNames.length ? m.courseNames.join(", ") : "belum masuk mata kuliah";
+  const meta = `${courses}  ·  dibuat ${isoDate(m.generatedAt)}`;
+
+  const content: Array<Record<string, unknown>> = [
+    { text: m.topicTitle, style: "title" },
+    { text: meta, style: "meta" },
+    rule(),
+  ];
+
+  // Derived study-guidance callout: frames recall/reasoning near the top so the
+  // PDF itself coaches the student, not just displays the module.
+  if (m.studyGuidance?.length) {
+    content.push(callout("Petunjuk belajar", m.studyGuidance));
+  }
+
+  content.push(...blocksToContent(m.contentMarkdown));
+
+  // A one-line pointer to the worksheet, so the split is discoverable from the
+  // reading PDF itself instead of being a hidden second button.
+  if (m.essayPrompt?.trim()) {
+    content.push(rule());
+    content.push({
+      text: "Pertanyaan esai dan rubrik penilaian ada di unduhan terpisah: “Unduh lembar kerja (PDF)”.",
+      style: "meta",
+    });
+  }
+
+  // Grounding appendix: keeps the numbered `[n]` citations resolvable (I5).
+  content.push(rule());
+  content.push(heading("Sumber (grounding)", "h2"));
+  if (m.sourcePapers.length === 0) {
+    content.push({ text: "Modul ini belum mencatat paper sumber.", style: "p" });
+  } else {
+    m.sourcePapers.forEach((p, i) => {
+      const citations =
+        typeof p.citationCount === "number" && p.citationCount > 0
+          ? ` — ${p.citationCount} sitasi`
+          : "";
+      // One APA-7 reference string (src/lib/citation.ts), re-parsed through the
+      // shared inline markdown reader so its `*…*` runs (journal name / book
+      // title) render as real italics here exactly as they do in the Markdown
+      // export — the two exports cite identically (I5). The list number stays
+      // bold and outside the reference so `[n]` remains resolvable; the citation
+      // count is app metadata, so it stays small and muted.
+      content.push({
+        text: [
+          { text: `${i + 1}. `, bold: true },
+          ...runsToFragments(parseInline(formatAPA(p))),
+          ...(citations ? [{ text: citations, fontSize: 9, color: MUTED }] : []),
+        ],
+        style: "source",
+        margin: [0, 0, 0, 4],
+      });
+    });
+  }
+
+  content.push(rule());
+  content.push({ text: EXPORT_FOOTER_TEXT, style: "meta", margin: [0, 0, 0, 0] });
+
+  return renderPdf(m.topicTitle, courses, content);
+}
+
+/**
+ * Renders the printable WORKSHEET PDF: the essay question, its 5W1H guidance,
+ * and the rubric — deliberately WITHOUT the module body or the sources
+ * appendix. The reading material (`generatePdf`) and the worksheet are now two
+ * separate downloads so the student can print the exercise sheet alone (e.g.
+ * to write on) while keeping the module on screen.
+ */
+export async function generateWorksheetPdf(m: ExportModule): Promise<Uint8Array> {
+  const courses = m.courseNames.length ? m.courseNames.join(", ") : "belum masuk mata kuliah";
+  const meta = `${courses}  ·  dibuat ${isoDate(m.generatedAt)}`;
+
+  const content: Array<Record<string, unknown>> = [
+    { text: m.topicTitle, style: "title" },
+    { text: meta, style: "meta" },
+    rule(),
+  ];
+
+  if (m.studyGuidance?.length) {
+    content.push(callout("Petunjuk belajar", m.studyGuidance));
+  }
+
+  if (m.essayPrompt?.trim()) {
+    content.push(heading("Pertanyaan esai (recall)", "h2"));
+    content.push({ text: runsToFragments(parseInline(m.essayPrompt.trim())), style: "p" });
+  } else {
+    content.push({ text: "Modul ini belum memiliki pertanyaan esai.", style: "p" });
+  }
+
+  if (m.essayRubric?.trim()) {
+    content.push(rule());
+    content.push(heading("Rubrik penilaian", "h3"));
+    const sections = m.rubricSections ?? parseRubric(m.essayRubric);
+    if (sections.length) content.push(...rubricToContent(sections));
+    else content.push({ text: runsToFragments(parseInline(m.essayRubric.trim())), style: "p" });
+  }
+
+  content.push(rule());
+  content.push({ text: EXPORT_FOOTER_TEXT, style: "meta", margin: [0, 0, 0, 0] });
+
+  return renderPdf(m.topicTitle, courses, content);
 }

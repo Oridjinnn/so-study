@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { withViewTransition } from "../lib/viewTransition";
 import { splitCourseNames } from "./CourseBatchImport";
 import { apiFetch } from "../lib/api";
 
@@ -47,6 +48,12 @@ function writeProfile(patch: Partial<SosoProfile>) {
  */
 export default function SosoOnboarding({ onFinished }: { onFinished: () => void }) {
   const [step, setStep] = useState<0 | 1 | 2>(0);
+  /**
+   * Screen changes cross-fade natively where supported (see
+   * app/lib/viewTransition.ts) and swap instantly elsewhere — the wizard is the
+   * first thing a new student sees, so it should not feel like a page reload.
+   */
+  const goToStep = (next: 0 | 1 | 2) => withViewTransition(() => setStep(next));
   const [name, setName] = useState("");
   const [university, setUniversity] = useState("");
   const [coursesText, setCoursesText] = useState("");
@@ -61,13 +68,13 @@ export default function SosoOnboarding({ onFinished }: { onFinished: () => void 
   function goToUniversity() {
     if (trimmedName) writeProfile({ name: trimmedName });
     setError(null);
-    setStep(1);
+    goToStep(1);
   }
 
   function goToCourses() {
     if (uni) writeProfile({ university: uni });
     setError(null);
-    setStep(2);
+    goToStep(2);
   }
 
   async function submit() {
@@ -156,7 +163,7 @@ export default function SosoOnboarding({ onFinished }: { onFinished: () => void 
                   type="button"
                   onClick={() => {
                     setError(null);
-                    setStep(0);
+                    goToStep(0);
                   }}
                   className="tap min-h-11 rounded-card px-4 py-2 text-sm text-muted transition hover:bg-zinc-100 focus-visible:ring-2 focus-visible:ring-brand-500 focus-visible:outline-none dark:hover:bg-zinc-800"
                 >
@@ -224,7 +231,7 @@ export default function SosoOnboarding({ onFinished }: { onFinished: () => void 
                   type="button"
                   onClick={() => {
                     setError(null);
-                    setStep(1);
+                    goToStep(1);
                   }}
                   className="tap min-h-11 rounded-card px-4 py-2 text-sm text-muted transition hover:bg-zinc-100 focus-visible:ring-2 focus-visible:ring-brand-500 focus-visible:outline-none dark:hover:bg-zinc-800"
                 >

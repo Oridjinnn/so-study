@@ -8,7 +8,7 @@
 import { z } from "zod";
 import { generate, type GeminiUsage } from "./gemini";
 import { logAIUsage } from "./aiusage";
-import { mcqHelpers } from "./mcq";
+import { extractKeyConcepts as extractModuleConcepts } from "./concepts";
 
 const EssayPromptSchema = z.object({ prompt: z.string().min(1) });
 
@@ -196,46 +196,15 @@ export async function generateEssayPromptWithFallback(
 
 // ---- Harness rubric (0% AI) -------------------------------------------------
 // Built from the module's fixed synthesis structure: key concepts (from the
-// "Konsep kunci" section, else claim-like lines) become the interpretation
-// criteria, plus fixed clarity / reasoning / grounding / comparison / relevance
-// criteria. Evaluation now strengthens interpretation & reasoning.
+// "Konsep kunci" section) become the interpretation criteria, plus fixed
+// clarity / reasoning / grounding / comparison / relevance criteria.
+// Concept extraction is delegated to the shared, boilerplate-aware
+// `extractKeyConcepts` (src/lib/concepts.ts) so the essay prompt and rubric
+// cannot mine template strings ("Setelah membaca modul ini, …") or run-on prose
+// as "concepts" — the defect that once produced "Menafsirkan konsep kunci
+// 'Setelah membaca modul ini,'" in the rubric.
 function extractKeyConcepts(content: string): string[] {
-  const lines = content.replace(/\r\n/g, "\n").split("\n");
-  const headingIdx = lines.findIndex((l) =>
-    /^\s*#{0,6}\s*(?:konsep\s+kunci|konsep\s+utama)\b/i.test(l),
-  );
-  let pool: string[] = [];
-  if (headingIdx !== -1) {
-    for (let i = headingIdx + 1; i < lines.length; i++) {
-      if (/^\s*#{1,6}\s/.test(lines[i])) break;
-      pool.push(lines[i]);
-    }
-  }
-  if (pool.length === 0) pool = mcqHelpers.extractClaims(content).map((c) => c.text);
-
-  const concepts: string[] = [];
-  for (const line of pool) {
-    const clean = line.replace(/^[#*\s>\-]+/, "").trim();
-    if (!clean) continue;
-    // Only treat a line as a concept definition when it is either a list item
-    // ("- Habitus") or contains a definition marker (":", "adalah", …). A bare
-    // prose sentence ("Dalam kajian Teori Antropologi Kontemporer, interaksi …")
-    // is explanatory body text, not a term — pulling it in would inject a
-    // long, out-of-place phrase into the essay prompt (the same class of bug as
-    // the old "Siapa … Dalam kajian … antari?" break).
-    const isListItem = /^[-*]\s/.test(line);
-    const hasDefMarker = /:\s*|\s?-\s*|\s?–\s*|(?:adalah|merupakan|ialah)\s/i.test(clean);
-    if (!isListItem && !hasDefMarker) continue;
-    const concept = clean
-      .split(/:\s*|\s?-\s*|\s?–\s*|(?:adalah|merupakan|ialah)\s/i)[0]
-      .trim();
-    const short = concept.split(/\s+/).slice(0, 4).join(" ").trim();
-    if (short.length >= 3 && !concepts.includes(short) && !/^(dan|atau|dengan|yang)$/i.test(short)) {
-      concepts.push(short);
-    }
-    if (concepts.length >= 4) break;
-  }
-  return concepts;
+  return extractModuleConcepts(content, 4);
 }
 
 export function buildEssayRubric(content: string): string {

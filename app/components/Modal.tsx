@@ -169,14 +169,14 @@ export default function Modal({
                   setConfirmingDiscard(false);
                   onClose();
                 }}
-                className="rounded-xl bg-red-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-red-500"
+                className="rounded-xl bg-red-600 px-3 py-1.5 text-sm font-medium text-white transition-colors duration-150 hover:bg-red-500"
               >
                 Ya
               </button>
               <button
                 type="button"
                 onClick={() => setConfirmingDiscard(false)}
-                className="rounded-xl border border-border px-3 py-1.5 text-sm font-medium hover:bg-zinc-100 dark:hover:bg-zinc-800"
+                className="rounded-xl border border-border px-3 py-1.5 text-sm font-medium transition-colors duration-150 hover:bg-zinc-100 dark:hover:bg-zinc-800"
               >
                 Batal
               </button>

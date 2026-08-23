@@ -511,14 +511,15 @@ describe("Workspace essay (P0-4, R6)", () => {
 });
 
 describe("Workspace export (Phase 3)", () => {
-  it("offers Markdown, Anki and server-generated PDF downloads when online", () => {
+  it("offers Markdown, Anki, module PDF and worksheet PDF downloads when online", () => {
     render(<Workspace detail={detailFixture()} online={true} />);
     const panel = screen.getByLabelText("Ekspor modul");
 
     for (const [label, fmt] of [
       ["Markdown", "md"],
       ["Anki", "anki"],
-      ["PDF", "pdf"],
+      ["PDF modul", "pdf"],
+      ["PDF lembar kerja", "pdf-worksheet"],
     ] as const) {
       const link = within(panel).getByRole("link", { name: label });
       expect(link).toHaveAttribute("href", `/api/modules/mod-1/export?format=${fmt}`);
@@ -531,9 +532,10 @@ describe("Workspace export (Phase 3)", () => {
     const panel = screen.getByLabelText("Ekspor modul");
 
     // No export link is navigable offline…
-    expect(within(panel).queryByRole("link", { name: "PDF" })).toBeNull();
+    expect(within(panel).queryByRole("link", { name: "PDF modul" })).toBeNull();
+    expect(within(panel).queryByRole("link", { name: "PDF lembar kerja" })).toBeNull();
     // …they are explained as disabled chips.
-    const pdf = within(panel).getByText("PDF", { exact: true });
+    const pdf = within(panel).getByText("PDF modul", { exact: true });
     expect(pdf).toHaveAttribute("aria-disabled", "true");
     expect(pdf).toHaveAttribute("title", "Ekspor butuh internet. Sambungkan dulu.");
   });

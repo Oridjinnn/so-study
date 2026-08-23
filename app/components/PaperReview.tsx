@@ -2,7 +2,11 @@
 
 import { useState } from "react";
 import type { CandidatePaper } from "../lib/types";
-import { defaultApprovedIndices, isInternationalJournal } from "@/src/lib/scoring";
+import {
+  defaultApprovedIndices,
+  internationalQuotaForMajor,
+  isInternationalJournal,
+} from "@/src/lib/scoring";
 import Modal from "./Modal";
 
 /**
@@ -20,6 +24,7 @@ export default function PaperReview({
   title,
   papers,
   busy,
+  major,
   onConfirm,
   onClose,
 }: {
@@ -27,6 +32,7 @@ export default function PaperReview({
   title: string;
   papers: CandidatePaper[];
   busy: boolean;
+  major?: string | null;
   onConfirm: (topicId: string, approvedIds: string[]) => void;
   onClose: () => void;
 }) {
@@ -58,11 +64,18 @@ export default function PaperReview({
   const approved = [...selected];
   const excludedCount = papers.length - approved.length;
 
-  // The review must surface a broad, internationally-representative pool: at
-  // least 2 international journals written in English or another language. This
-  // count is shown so the student can verify the breadth requirement directly.
+  // International-journal breadth is informational, NOT a blocking gate. Some
+  // topics are correctly studied from domestic literature (Indonesian law,
+  // local bureaucracy); forcing international papers there just swaps in
+  // lower-relevance sources. The quota is context-aware on the course jurusan
+  // (see internationalQuotaForMajor): only international/comparative topics
+  // "require" 2. We surface the count so the student is aware, never blocked.
   const internationalCount = papers.filter((p) => isInternationalJournal(p)).length;
-  const internationalMet = internationalCount >= 2;
+  const internationalQuota = internationalQuotaForMajor(major);
+  const internationalNote =
+    internationalQuota > 0 && internationalCount < internationalQuota
+      ? `Perhatian: topik ini menargetkan ${internationalQuota} jurnal internasional (terdeteksi ${internationalCount}). Cek relevansi sebelum lanjut.`
+      : `${internationalCount} dari ${papers.length} sumber adalah jurnal internasional — wajar untuk topik hukum domestik, tapi cek relevansi lebih teliti.`;
 
   function submit() {
     // Never auto-approve nothing into an empty module: the gate blocks with a
@@ -92,16 +105,12 @@ export default function PaperReview({
             hilangkan centang bila ada yang tidak cocok, lalu lanjut.
           </p>
           <p
-            className={`mt-2 inline-flex items-center gap-1.5 rounded-full px-2 py-0.5 text-xs font-semibold ${
-              internationalMet
-                ? "bg-brand-500/15 text-link"
-                : "bg-amber-500/15 text-amber-700 dark:text-amber-300"
-            }`}
-            title="Syarat kedalaman so-study: minimal 2 jurnal internasional (Inggris/lainnya)"
+            className="mt-2 inline-flex items-center gap-1.5 rounded-full bg-brand-500/10 px-2 py-0.5 text-xs font-medium text-ink/70 dark:text-zinc-300"
+            title="Jumlah jurnal internasional bersifat informasi, bukan syarat wajib."
           >
-            Jurnal internasional: {internationalCount}/2
-            {internationalMet ? " ✓" : " — kurang"}
+            Jurnal internasional: {internationalCount}/{papers.length}
           </p>
+          <p className="mt-1 text-xs text-muted">{internationalNote}</p>
         </div>
 
         <div className="flex-1 space-y-2 overflow-y-auto p-4">

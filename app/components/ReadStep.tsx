@@ -136,12 +136,20 @@ export default function ReadStep({
                   </p>
                   <div className="flex flex-wrap items-center gap-3">
                     {moduleId && (
-                      <a
-                        href={`/api/modules/${moduleId}/export?format=pdf`}
-                        className="rounded-lg bg-brand-500 px-3 py-1.5 font-medium text-white transition-colors hover:bg-brand-600"
-                      >
-                        Unduh modul lengkap (PDF)
-                      </a>
+                      <>
+                        <a
+                          href={`/api/modules/${moduleId}/export?format=pdf`}
+                          className="rounded-lg bg-brand-500 px-3 py-1.5 font-medium text-white transition-colors hover:bg-brand-600"
+                        >
+                          Unduh modul lengkap (PDF)
+                        </a>
+                        <a
+                          href={`/api/modules/${moduleId}/export?format=pdf-worksheet`}
+                          className="rounded-lg border border-brand-500 px-3 py-1.5 font-medium text-brand-700 transition-colors hover:bg-brand-500/10 dark:text-brand-300"
+                        >
+                          Unduh lembar kerja (PDF)
+                        </a>
+                      </>
                     )}
                     <button
                       type="button"

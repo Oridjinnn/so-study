@@ -115,8 +115,13 @@ describe("GET /api/modules/[id]/export?format=pdf", () => {
   }, 30000);
 });
 
-describe("GET /api/modules/[id]/export?format=pdf rubric", () => {
-  const rubricModule = {
+// The export is deliberately TWO files: `?format=pdf` is reading material
+// (module body + grounding sources) and `?format=pdf-worksheet` is the printable
+// exercise sheet (essay question + 5W1H guidance + rubric). Each test below
+// asserts BOTH halves of that split — what the file contains AND what it must
+// not — so the two downloads can never silently collapse back into one bundle.
+describe("GET /api/modules/[id]/export PDF split (module vs worksheet)", () => {
+  const withEssay = {
     ...moduleFixture,
     essayPrompt: "Jelaskan habitus dengan kata sendiri.",
     essayRubric: [
@@ -134,19 +139,70 @@ describe("GET /api/modules/[id]/export?format=pdf rubric", () => {
     ].join("\n"),
   };
 
-  it("renders the rubric as a structured checklist (penulisan/penafsiran/penalaran)", async () => {
-    moduleMock.findFirst.mockResolvedValue(rubricModule);
-    const res = await GET(await makeReq("pdf"), ctx("1"));
+  async function pdfText(format: "pdf" | "pdf-worksheet"): Promise<string> {
+    moduleMock.findFirst.mockResolvedValue(withEssay);
+    const res = await GET(await makeReq(format), ctx("1"));
+    expect(res.status).toBe(200);
+    expect(res.headers.get("Content-Type")).toBe("application/pdf");
     const buf = Buffer.from(await res.arrayBuffer());
+    // Each format is an independently-openable PDF file, not a fragment.
+    expect(buf.slice(0, 5).toString("latin1")).toBe("%PDF-");
+    expect(buf.length).toBeGreaterThan(1000);
     const parser = new PDFParse({ data: buf });
-    const { text } = await parser.getText();
+    return (await parser.getText()).text;
+  }
+
+  it("?format=pdf carries the module body + sources and NO essay question or rubric", async () => {
+    const text = await pdfText("pdf");
+    // Reading material…
+    expect(text).toContain("Habitus");
+    expect(text).toContain("[1]");
+    expect(text).toContain("Outline of a Theory of Practice"); // grounding appendix
+    // …and none of the assessment material, which now lives in the worksheet.
+    expect(text).not.toContain("Rubrik penilaian");
+    expect(text).not.toContain("Jelaskan habitus dengan kata sendiri");
+    expect(text).not.toContain("Menafsirkan konsep kunci");
+    // Instead it points at the separate download so the split is discoverable.
+    expect(text).toContain("lembar kerja");
+  }, 30000);
+
+  it("?format=pdf-worksheet carries the essay question + 5W1H + rubric and NO module body or sources", async () => {
+    const text = await pdfText("pdf-worksheet");
+    // Exercise sheet…
+    expect(text).toContain("Pertanyaan esai");
+    expect(text).toContain("Jelaskan habitus dengan kata sendiri");
+    expect(text).toContain("Rubrik penilaian");
     expect(text).toContain("Penulisan");
     expect(text).toContain("Penafsiran");
     expect(text).toContain("Penalaran");
+    expect(text).toContain("5W1H");
     // A concrete criterion (not just the section headings) survives the render.
     // (pdf-parse drops the `→` glyph, so assert on the surrounding words.)
     expect(text).toContain("bukti");
     expect(text).toContain("kesimpulan");
+    // …without the module body or the grounding appendix.
+    expect(text).not.toContain("disposisi");
+    expect(text).not.toContain("Outline of a Theory of Practice");
+    expect(text).not.toContain("Sumber (grounding)");
+  }, 30000);
+
+  it("names the two files differently so both can be saved side by side", async () => {
+    moduleMock.findFirst.mockResolvedValue(withEssay);
+    const modRes = await GET(await makeReq("pdf"), ctx("1"));
+    const wsRes = await GET(await makeReq("pdf-worksheet"), ctx("1"));
+    expect(modRes.headers.get("Content-Disposition")).toContain("so-study-teori-praktik-bourdieu.pdf");
+    expect(wsRes.headers.get("Content-Disposition")).toContain(
+      "so-study-teori-praktik-bourdieu-worksheet.pdf",
+    );
+  }, 30000);
+
+  it("worksheet says so plainly when the module has no essay question yet", async () => {
+    moduleMock.findFirst.mockResolvedValue({ ...moduleFixture, essayPrompt: null, essayRubric: null });
+    const res = await GET(await makeReq("pdf-worksheet"), ctx("1"));
+    const buf = Buffer.from(await res.arrayBuffer());
+    const parser = new PDFParse({ data: buf });
+    const { text } = await parser.getText();
+    expect(text).toContain("belum memiliki pertanyaan esai");
   }, 30000);
 });
 

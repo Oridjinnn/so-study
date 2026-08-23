@@ -7,6 +7,7 @@
  * parser so it can never drift from the on-screen reader (I5).
  */
 import { parseBlocks, parseInline } from "./markdownBlocks";
+import { extractKeyConcepts } from "@/src/lib/concepts";
 
 export interface ModuleAnalysis {
   /** Short concept terms drawn from a "Konsep kunci"/"Definisi" section. */
@@ -17,25 +18,19 @@ export interface ModuleAnalysis {
   citationCount: number;
 }
 
-const CONCEPT_SECTION = /konsep|definisi|istilah/;
 const ARGUMENT_SECTION = /argumen|klaim|teori/;
-const STOP_WORDS = /^(dan|atau|dengan|yang)$/i;
 
-/** Collapses a line to its leading concept term (before ":", "adalah", …). */
-function shortConcept(line: string): string | null {
-  const clean = line.replace(/^[#*\s>\-]+/, "").trim();
-  if (!clean) return null;
-  const concept = clean
-    .split(/:\s*|\s?-\s*|\s?–\s*|(?:adalah|merupakan|ialah)\s/i)[0]
-    .trim();
-  const short = concept.split(/\s+/).slice(0, 4).join(" ").trim();
-  return short.length >= 3 && !STOP_WORDS.test(short) ? short : null;
-}
-
-/** Walks the module's own structure to capture what the student must interpret. */
+/**
+ * Walks the module's own structure to capture what the student must interpret.
+ *
+ * Key concepts are extracted by the shared, boilerplate-aware `extractKeyConcepts`
+ * (src/lib/concepts.ts) — the same function the essay prompt and rubric use — so
+ * the PDF intro ("Petunjuk belajar") can never show template/run-on garbage like
+ * the old "Dalam penataan ranah Hubungan, Aktor …, Birokrat Tingkat Tapak
+ * (*Street," export. Key arguments are still pulled from the "Argumen" section.
+ */
 export function analyzeModuleContent(markdown: string): ModuleAnalysis {
   const blocks = parseBlocks(markdown);
-  const keyConcepts: string[] = [];
   const keyArguments: string[] = [];
   let citationCount = 0;
 
@@ -50,34 +45,27 @@ export function analyzeModuleContent(markdown: string): ModuleAnalysis {
   for (let i = 0; i < blocks.length; i++) {
     const b = blocks[i];
     if (b.type !== "h1" && b.type !== "h2" && b.type !== "h3" && b.type !== "h4") continue;
-    const heading = b.text.toLowerCase();
-    const isConcept = CONCEPT_SECTION.test(heading);
-    const isArgument = ARGUMENT_SECTION.test(heading);
-    if (!isConcept && !isArgument) continue;
+    if (!ARGUMENT_SECTION.test(b.text.toLowerCase())) continue;
 
     for (let j = i + 1; j < blocks.length; j++) {
       const nxt = blocks[j];
       if (nxt.type === "h1" || nxt.type === "h2" || nxt.type === "h3" || nxt.type === "h4") break;
       if (nxt.type === "ul" || nxt.type === "ol") {
         for (const it of nxt.items) {
-          if (isConcept) {
-            const c = shortConcept(it);
-            if (c && keyConcepts.length < 6 && !keyConcepts.includes(c)) keyConcepts.push(c);
-          } else if (isArgument) {
-            const a = it.trim();
-            if (a && keyArguments.length < 6 && !keyArguments.includes(a)) keyArguments.push(a);
-          }
+          const a = it.trim();
+          if (a && keyArguments.length < 6 && !keyArguments.includes(a)) keyArguments.push(a);
         }
       } else if (nxt.type === "quote") {
-        if (isArgument && keyArguments.length < 6) keyArguments.push(nxt.text.trim());
-      } else if (nxt.type === "p" && isConcept) {
-        const c = shortConcept(nxt.text);
-        if (c && keyConcepts.length < 6 && !keyConcepts.includes(c)) keyConcepts.push(c);
+        if (keyArguments.length < 6) keyArguments.push(nxt.text.trim());
       }
     }
   }
 
-  return { keyConcepts, keyArguments, citationCount };
+  return {
+    keyConcepts: extractKeyConcepts(markdown, 6),
+    keyArguments,
+    citationCount,
+  };
 }
 
 /**

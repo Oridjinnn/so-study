@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/src/lib/prisma";
 import { notFoundForUser, requireUser } from "@/src/lib/tenancy";
 import { generateMCQ } from "@/src/lib/mcq";
-import { generatePdf } from "@/src/lib/pdf";
+import { generatePdf, generateWorksheetPdf } from "@/src/lib/pdf";
 import type { PaperType } from "@/src/lib/sources/types";
 import {
   type ExportCard,
@@ -92,7 +92,7 @@ export async function GET(req: NextRequest, ctx: RouteContext<"/api/modules/[id]
   const format = parseExportFormat(req.nextUrl.searchParams.get("format"));
   if (!format) {
     return NextResponse.json(
-      { error: "Query param 'format' harus 'md', 'anki', atau 'pdf'." },
+      { error: "Query param 'format' harus 'md', 'anki', 'pdf', atau 'pdf-worksheet'." },
       { status: 400 },
     );
   }
@@ -162,10 +162,17 @@ export async function GET(req: NextRequest, ctx: RouteContext<"/api/modules/[id]
     });
   }
 
-  if (format === "pdf") {
+  if (format === "pdf" || format === "pdf-worksheet") {
     // Enrich with derived guidance / concepts / rubric sections so the export
     // reflects a real reading of the module, not a raw text dump.
-    const pdf = await generatePdf(enrichModule(exportModule));
+    // `pdf` = module content + sources (reading material);
+    // `pdf-worksheet` = essay question + 5W1H guidance + rubric only (exercise
+    // sheet), generated as a separate download.
+    const enriched = enrichModule(exportModule);
+    const pdf =
+      format === "pdf-worksheet"
+        ? await generateWorksheetPdf(enriched)
+        : await generatePdf(enriched);
     // Copy into a plain ArrayBuffer: the TS DOM lib types reject the generic
     // `Uint8Array<ArrayBufferLike>` from pdfmake as a `BlobPart`/`BodyInit`.
     const ab = new ArrayBuffer(pdf.byteLength);

@@ -22,10 +22,12 @@ import SosoOnboarding from "./components/SosoOnboarding";
 import SosoReminder from "./components/SosoReminder";
 import InstallGuide from "./components/InstallGuide";
 import PushOptIn from "./components/PushOptIn";
-import { SynthesisSkeleton } from "./components/Skeletons";
+import { PaperListSkeleton, SynthesisSkeleton } from "./components/Skeletons";
+import LoadingPanel from "./components/LoadingPanel";
 import ErrorBoundary from "./components/ErrorBoundary";
 import Modal from "./components/Modal";
 import { apiFetch } from "./lib/api";
+import { withViewTransition } from "./lib/viewTransition";
 
 interface ReviewState {
   topicId: string;
@@ -66,6 +68,25 @@ function UnverifiedOrderBadge() {
   );
 }
 
+/**
+ * Staged wait labels. They mirror the real server sequence (retrieve → score →
+ * shortlist; then synthesize → verify → persist) so the text is honest even
+ * though the timing is not measured. See LoadingPanel for why staged beats a
+ * mute spinner.
+ */
+const RETRIEVAL_STAGES = [
+  "Mencari paper…",
+  "Menilai relevansi…",
+  "Menyusun daftar kandidat…",
+] as const;
+
+const SYNTHESIS_STAGES = [
+  "Membaca paper yang disetujui…",
+  "Menyusun modul…",
+  "Memeriksa sitasi & akurasi…",
+  "Menyimpan modul…",
+] as const;
+
 const PRIMARY_CLASS =
   "tap min-h-11 rounded-card bg-brand-600 px-4 py-2 text-sm font-medium text-white transition hover:bg-brand-700 focus-visible:ring-2 focus-visible:ring-brand-500 focus-visible:outline-none disabled:opacity-50";
 const SECONDARY_CLASS =
@@ -83,7 +104,13 @@ export default function Home() {
   const [status, setStatus] = useState<string>("");
   const [busy, setBusy] = useState(false);
   const [review, setReview] = useState<ReviewState | null>(null);
+  const [retrieving, setRetrieving] = useState(false);
   const [synthesizing, setSynthesizing] = useState(false);
+  /**
+   * Real, measured synthesis progress (characters streamed) — shown instead of
+   * the staged guess as soon as the SSE stream starts producing text.
+   */
+  const [synthDetail, setSynthDetail] = useState<string | null>(null);
   const [progress, setProgress] = useState<ProgressData | null>(null);
   const [progressNonce, setProgressNonce] = useState(0);
   const [coursesLoaded, setCoursesLoaded] = useState(false);
@@ -155,8 +182,13 @@ export default function Home() {
       const res = await apiFetch(`/api/modules/${id}`);
       const d = await res.json();
       if (!res.ok) throw new Error(d.error ?? `HTTP ${res.status}`);
-      setDetail(d);
-      setStatus("Modul terbuka.");
+      // Dashboard → module workspace is the app's biggest screen change; the
+      // native View Transitions API cross-fades it for free where supported
+      // (app/lib/viewTransition.ts) and is a plain swap everywhere else.
+      withViewTransition(() => {
+        setDetail(d);
+        setStatus("Modul terbuka.");
+      });
     } catch (e) {
       setError((e as Error).message);
       setStatus("");
@@ -213,6 +245,10 @@ export default function Home() {
         submission;
       setComposerOpen(false);
       setBusy(true);
+      // Visible loading state BEFORE the await, in the same tick the composer
+      // closes: the student must never look at an unchanged screen while a 10s
+      // request runs (that reads as broken, not slow).
+      setRetrieving(true);
       setError(null);
       setStatus("Mencari paper untuk topik ini…");
       try {
@@ -243,6 +279,7 @@ export default function Home() {
         setError((e as Error).message);
         setStatus("");
       } finally {
+        setRetrieving(false);
         setBusy(false);
       }
     },
@@ -270,6 +307,7 @@ export default function Home() {
           review?.courseMajor,
         );
         setSynthesizing(true);
+        setSynthDetail(null);
         setStatus("Menyusun modul dari paper yang Anda setujui…");
         const res = await apiFetch("/api/synthesize", {
           method: "POST",
@@ -345,6 +383,8 @@ export default function Home() {
                 if (draft.length - announced >= 200) {
                   announced = draft.length;
                   setStatus(`Menyusun modul… ${draft.length} karakter tersusun.`);
+                  // Same number, shown (not just announced) in the loading panel.
+                  setSynthDetail(`${draft.length} karakter tersusun…`);
                 }
               }
             }
@@ -536,10 +576,12 @@ export default function Home() {
         <Sidebar
           courses={courses}
           activeCourseId={activeCourseId}
-          onSelectCourse={(id) => {
-            setActiveCourseId(id);
-            setDetail(null);
-          }}
+          onSelectCourse={(id) =>
+            withViewTransition(() => {
+              setActiveCourseId(id);
+              setDetail(null);
+            })
+          }
           onNew={() => setComposerOpen(true)}
           onBatchImport={() => setBatchOpen(true)}
           dueTodayByCourse={dueTodayByCourse}
@@ -575,7 +617,7 @@ export default function Home() {
                 <div className="border-b border-border px-4 py-2 sm:px-6">
                   <button
                     type="button"
-                    onClick={() => setDetail(null)}
+                    onClick={() => withViewTransition(() => setDetail(null))}
                     className="tap min-h-11 text-sm text-link hover:underline focus-visible:ring-2 focus-visible:ring-brand-500 focus-visible:outline-none"
                   >
                     ← Kembali ke {activeCourse?.name ?? "daftar"}
@@ -760,15 +802,20 @@ export default function Home() {
             title={review.title}
             papers={review.papers}
             busy={busy}
+            major={review?.courseMajor}
             onConfirm={confirmApproval}
             onClose={() => setReview(null)}
           />
         )}
+        {retrieving && (
+          <LoadingPanel title="Mencari paper untuk topik ini…" stages={RETRIEVAL_STAGES}>
+            <PaperListSkeleton />
+          </LoadingPanel>
+        )}
         {synthesizing && (
-          <div className="mx-auto max-w-3xl px-4 py-6 sm:px-6">
-            <h2 className="mb-3 text-xl font-bold">Menyusun modul…</h2>
+          <LoadingPanel title="Menyusun modul…" stages={SYNTHESIS_STAGES} detail={synthDetail}>
             <SynthesisSkeleton />
-          </div>
+          </LoadingPanel>
         )}
         {usageOpen && <UsageModal rows={usage} onClose={() => setUsageOpen(false)} />}
 

@@ -39,6 +39,26 @@ export function isInternationalJournal(p: {
   return true;
 }
 
+/**
+ * Context-aware minimum number of international-journal papers for a shortlist.
+ *
+ * Historically this was a fixed `2` applied to EVERY topic, which wrongly forced
+ * two lower-relevance international papers into the pool even for legitimately
+ * domestic-literature topics (Indonesian law, local bureaucracy, domestic policy
+ * implementation) — those are correctly studied from Indonesian-language
+ * secondary literature. The requirement is now tied to the course's jurusan:
+ * only genuinely international / comparative / global topics keep the quota.
+ * Everything else defaults to `0` (no forced international papers) so relevance
+ * — not a rigid heuristic — drives the shortlist.
+ */
+export function internationalQuotaForMajor(major?: string | null): number {
+  if (!major) return 0;
+  const m = major.toLowerCase();
+  return /(internasional|international|komparatif|comparative|global|hubungan internasional)/.test(m)
+    ? 2
+    : 0;
+}
+
 export interface ScoringOptions {
   /** Max citation count in the batch, for normalization. Falls back to log scale. */
   maxCitations?: number;
