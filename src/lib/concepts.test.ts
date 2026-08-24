@@ -54,6 +54,80 @@ describe("extractKeyConcepts (Bug 1 regression)", () => {
   });
 });
 
+// The SHAPE the user's failing module actually used: the synthesis contract asks
+// for one "### Nama Konsep" sub-section per concept, but the AI instead wrote
+// "## Konsep Kunci & Definisi" followed by a FLAT numbered list
+// ("1. **Nama**: definisi" … "10. Nama: definisi") with NO sub-headings. The
+// previous pass atomised those list items at commas/parens, so the PDF intro,
+// essay Bagaimana question and rubric showed garbage like
+// "Aktor Selain Negara (Non" and "Pemetaan Jaringan Aktor (Actor". This pins the
+// numbered-list path: each entry must become ONE clean term.
+const NUMBERED_MODULE = `## Tujuan Pembelajaran
+
+Setelah membaca modul ini, kamu bisa membedakan tingkatan aktor dan level hukum.
+
+## Konsep kunci & definisi
+
+Untuk memahami lanskap hukum, kita perlu memetakan aktor berdasarkan tingkatan.
+
+1. *Aktor Selain Negara (Non-State Armed Groups) dalam Hukum Humaniter*: Kelompok bersenjata non-pemerintah [4].
+2. Aktor Hibrida & Sinergi Masyarakat Sipil-Pemerintah: Kolaborasi antara CSO dan negara [5].
+3. Aktor Negara dalam Rezim Iklim Global: Peran negara sebagai aktor utama [9].
+4. Jaringan Aktor Bisnis Sub-Nasional: Kelompok usaha lokal [1].
+5. *Pemetaan Jaringan Aktor (Actor-Network Mapping)*: Metodologi analisis HI [2].
+6. Birokrasi Pelayanan Publik Digital: Transformasi aktor negara [3].
+
+## Argumen utama tiap sumber
+
+- Negara tidak memonopoli otoritas di ruang non-state [1].
+`;
+
+describe("extractKeyConcepts on the numbered-list '## Konsep' shape", () => {
+  const concepts = extractKeyConcepts(NUMBERED_MODULE, 6);
+
+  it("reads every numbered entry as one clean term (no comma/paren fragments)", () => {
+    expect(concepts.length).toBeGreaterThan(0);
+    expect(concepts).toContain("Aktor Selain Negara (Non-State Armed Groups) dalam Hukum Humaniter");
+    expect(concepts).toContain("Aktor Hibrida & Sinergi Masyarakat Sipil-Pemerintah");
+    expect(concepts).toContain("Aktor Negara dalam Rezim Iklim Global");
+    expect(concepts).toContain("Pemetaan Jaringan Aktor (Actor-Network Mapping)");
+    // The lead-in prose is connective tissue, never a concept.
+    expect(concepts.some((c) => c.toLowerCase().startsWith("untuk"))).toBe(false);
+  });
+
+  it("strips the ordinal and emphasis but keeps balanced parenthetical glosses", () => {
+    for (const c of concepts) {
+      expect(c).not.toMatch(/^\d+\./); // no "1." ordinal leak
+      expect(c).not.toMatch(/[*_]/); // no dangling emphasis markers
+      // every parenthetical is balanced — never the truncated "(Non" / "(Actor"
+      const opens = (c.match(/\(/g) || []).length;
+      const closes = (c.match(/\)/g) || []).length;
+      expect(opens).toBe(closes);
+    }
+  });
+
+  it("feeds clean concepts to the PDF intro + rubric (no garbage)", () => {
+    const analysis = analyzeModuleContent(NUMBERED_MODULE);
+    expect(analysis.keyConcepts).toContain("Aktor Selain Negara (Non-State Armed Groups) dalam Hukum Humaniter");
+
+    const guidance = deriveStudyGuidance(analysis, "Tulis esai tentang aktor.");
+    const intro = guidance.join(" ");
+    // The corrupted export read "Aktor Selain Negara (Non, Aktor Hibrida …" — a
+    // paren opened inside a concept but never closed. Every paren in the intro
+    // must now be balanced, and the clean concept present.
+    const opens = (intro.match(/\(/g) || []).length;
+    const closes = (intro.match(/\)/g) || []).length;
+    expect(opens).toBe(closes);
+    expect(intro).toContain("Aktor Selain Negara (Non-State Armed Groups)");
+
+    const rubric = buildEssayRubric(NUMBERED_MODULE);
+    expect(rubric).toMatch(/Aktor Selain Negara \(Non-State Armed Groups\) dalam Hukum Humaniter/);
+    const rOpens = (rubric.match(/\(/g) || []).length;
+    const rCloses = (rubric.match(/\)/g) || []).length;
+    expect(rOpens).toBe(rCloses);
+  });
+});
+
 describe("essay harness (Bug 1 regression)", () => {
   it("essay question never embeds the template lead-in", () => {
     const q = generateEssayPromptHarness(CORRUPTED_MODULE, TITLE);

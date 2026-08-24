@@ -87,6 +87,21 @@ const SYNTHESIS_STAGES = [
   "Menyimpan modul…",
 ] as const;
 
+// A slow request can resolve almost instantly when the result is cached (or the
+// server is local). Without a floor the loading panel mounts and unmounts
+// within a single frame, so the student sees the NEXT screen "appear suddenly"
+// with no feedback in between — the exact frozen-UI complaint. Hold the panel
+// up for at least this long so the wait is always perceptible. Only adds time
+// when the request finished faster than the floor; a genuinely slow request is
+// unaffected.
+const MIN_LOADING_MS = 700;
+async function holdLoadingUntil(startedAt: number): Promise<void> {
+  const elapsed = Date.now() - startedAt;
+  if (elapsed < MIN_LOADING_MS) {
+    await new Promise((r) => setTimeout(r, MIN_LOADING_MS - elapsed));
+  }
+}
+
 const PRIMARY_CLASS =
   "tap min-h-11 rounded-card bg-brand-600 px-4 py-2 text-sm font-medium text-white transition hover:bg-brand-700 focus-visible:ring-2 focus-visible:ring-brand-500 focus-visible:outline-none disabled:opacity-50";
 const SECONDARY_CLASS =
@@ -251,6 +266,7 @@ export default function Home() {
       setRetrieving(true);
       setError(null);
       setStatus("Mencari paper untuk topik ini…");
+      const retrieveStartedAt = Date.now();
       try {
         const resolvedCourseId = await ensureCourseId(courseId, courseName, courseMajor);
         const res = await apiFetch("/api/retrieve", {
@@ -279,6 +295,7 @@ export default function Home() {
         setError((e as Error).message);
         setStatus("");
       } finally {
+        await holdLoadingUntil(retrieveStartedAt);
         setRetrieving(false);
         setBusy(false);
       }
@@ -291,6 +308,7 @@ export default function Home() {
       setBusy(true);
       setError(null);
       setStatus("Menyimpan persetujuan paper…");
+      const synthStartedAt = Date.now();
       try {
         const patch = await apiFetch(`/api/papers/${topicId}`, {
           method: "PATCH",
@@ -426,6 +444,7 @@ export default function Home() {
         setError((e as Error).message);
         setStatus("");
       } finally {
+        await holdLoadingUntil(synthStartedAt);
         setBusy(false);
         setSynthesizing(false);
       }
@@ -438,6 +457,8 @@ export default function Home() {
       setBusy(true);
       setError(null);
       setStatus("Memuat paper kandidat…");
+      setRetrieving(true);
+      const selectStartedAt = Date.now();
       try {
         const res = await apiFetch(`/api/papers/${t.id}`);
         const data = await res.json();
@@ -448,6 +469,8 @@ export default function Home() {
         setError((e as Error).message);
         setStatus("");
       } finally {
+        await holdLoadingUntil(selectStartedAt);
+        setRetrieving(false);
         setBusy(false);
       }
     },

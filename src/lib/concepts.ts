@@ -152,7 +152,7 @@ function headingLevel(line: string): number | null {
 }
 
 const CONCEPT_SECTION_HEADING =
-  /^\s*#{0,6}\s*(?:konsep\s+kunci|konsep\s+utama|definisi|istilah)\b/i;
+  /^\s*#{0,6}\s*(?:\d+[.)]\s*)?(?:konsep\s+kunci|konsep\s+utama|definisi|istilah)\b/i;
 
 /**
  * Accepts a candidate term or rejects it. `clampWords` limits prose atoms to a
@@ -205,6 +205,7 @@ export function extractKeyConcepts(markdown: string, limit = 6): string[] {
   const sectionLevel = headingLevel(lines[idx]) ?? 6;
 
   const headingTitles: string[] = [];
+  const numberedEntries: string[] = [];
   const introLines: string[] = [];
   let sawSubHeading = false;
   for (let i = idx + 1; i < lines.length; i++) {
@@ -218,7 +219,19 @@ export function extractKeyConcepts(markdown: string, limit = 6): string[] {
     // Prose is only mined from the section INTRO (before the first concept
     // sub-heading). Body text inside a concept sub-section is its explanation
     // ("Contoh konkret: …", "Pertanyaan refleksi: …"), never a second term.
-    if (!sawSubHeading) introLines.push(lines[i].replace(/^[-*]\s+/, "").replace(/^\d+\.\s+/, "").trim());
+    if (!sawSubHeading) {
+      const t = lines[i].replace(/^[-*]\s+/, "").trim();
+      if (!t) continue;
+      // A numbered concept entry ("1. **Nama Konsep**: definisi") is the
+      // authoritative term list when the AI writes the section as a numbered
+      // list instead of `###` sub-headings. Capture it WHOLE (the ordinal is
+      // stripped here) so it is read as ONE term — not atomised at commas /
+      // parens into garbage like "Aktor Selain Negara (Non" or "Pemetaan
+      // Jaringan Aktor (Actor".
+      const nm = t.match(/^\d+[.)]\s+([\s\S]*)$/);
+      if (nm) numberedEntries.push(nm[1]);
+      else introLines.push(t);
+    }
   }
 
   const concepts: string[] = [];
@@ -232,6 +245,13 @@ export function extractKeyConcepts(markdown: string, limit = 6): string[] {
     return concepts.length >= limit;
   };
 
+  // Priority order matches how the synthesis template may actually write the
+  // section (the AI does not always honour the `###` sub-heading contract):
+  //   1. `###` sub-heading titles — one concept per sub-section.
+  //   2. A numbered concept list ("1. **Nama**: …") written as flat prose.
+  //   3. Loose intro prose / a comma-joined run-on (older, flatter modules).
+  // Structured sources win so connective tissue (e.g. the lead-in "Untuk
+  // memahami lanskap hukum, …") is never mined as a concept.
   for (const title of headingTitles) {
     // The heading is the term: keep it whole, minus any "— penjelasan" tail and
     // any parenthetical gloss ("(*Street-Level Bureaucrat*)"), which is where
@@ -240,11 +260,36 @@ export function extractKeyConcepts(markdown: string, limit = 6): string[] {
       return concepts;
   }
 
-  for (const raw of introLines) {
-    if (!raw) continue;
-    for (const atom of toAtoms(raw)) {
-      if (push(sanitizeConcept(atom, { clampWords: 4, maxChars: 42 }))) return concepts;
+  for (const entry of numberedEntries) {
+    // A numbered list entry is one term — prefer the bold wrapper, keep balanced
+    // parentheticals (e.g. "(Actor-Network Mapping)"), drop the ": definisi" tail.
+    if (push(conceptFromTerm(entry, 80))) return concepts;
+  }
+
+  if (!headingTitles.length && !numberedEntries.length) {
+    for (const raw of introLines) {
+      if (!raw) continue;
+      for (const atom of toAtoms(raw)) {
+        if (push(sanitizeConcept(atom, { clampWords: 4, maxChars: 42 }))) return concepts;
+      }
     }
   }
   return concepts;
+}
+
+/**
+ * Turns a concept heading / numbered-list-entry title into a clean term. Strips
+ * markdown emphasis (preferring an explicit `**bold**` wrapper as the term) and
+ * any "— penjelasan" / ": definisi" tail via `termSide`. `clampWords` is null:
+ * concept names are terms by construction, so truncating them would chop a
+ * legitimate multi-word concept ("Aktor Selain Negara (Non-State Armed Groups)
+ * dalam Hukum Humaniter").
+ */
+function conceptFromTerm(raw: string, maxChars: number): string | null {
+  let s = raw.trim();
+  // Prefer an explicit emphasis wrapper as the term (e.g. "**Nama Konsep**").
+  const emph = s.match(/\*\*(.+?)\*\*/) || s.match(/\*(.+?)\*/) || s.match(/_(.+?)_/);
+  if (emph) s = emph[1];
+  s = termSide(s);
+  return sanitizeConcept(s, { clampWords: null, maxChars });
 }

@@ -13,6 +13,38 @@ Format per entry:
 
 ---
 
+## [2026-08-24 | 12:45 WIB | Monday | 24 August 2026]
+
+Two export/UX defects fixed (reported on the worksheet PDF
+`…tingkatan-aktor-dan-level-hukum-yang-terikat-pada-aktor-2.pdf`).
+
+1) Corrupted key-concept export (rubric + "Petunjuk belajar" intro showed garbage
+like `Aktor Selain Negara (Non`, `Pemetaan Jaringan Aktor (Actor`). The synthesis
+AI wrote the "Konsep Kunci & Definisi" section as a FLAT numbered list
+(`1. **Nama**: definisi` … `10. Nama: definisi`) with NO `###` sub-headings.
+`extractKeyConcepts` only trusted `###` sub-headings, so it fell back to mining the
+list as prose and atomised each entry at commas/parens into truncated fragments.
+
+- FILE: src/lib/concepts.ts (lines ~154, ~200–249, edited) — `CONCEPT_SECTION_HEADING`
+  now tolerates a leading `N. ` ordinal; `extractKeyConcepts` reads a numbered concept
+  list (`1. **Nama**: …`) as ONE term each (strips the ordinal, keeps balanced
+  parentheticals, drops the `: definisi` tail), and only falls back to prose mining
+  when there are neither sub-headings nor numbered entries. Added `conceptFromTerm`.
+  WHY: penafsiran / I5 — export must reflect a real reading, not run-on garbage.
+- FILE: src/lib/concepts.test.ts (edited) — added regression fixtures for the numbered
+  `## Konsep` layout asserting balanced parens and clean terms across PDF intro + rubric.
+
+2) Loading panel could appear for <1 frame when retrieval/synthesis resolves fast
+(cache hit / local server), so the next screen "appeared suddenly" with no feedback.
+
+- FILE: app/page.tsx (lines 97–101, 269+298, 311+447, 461+472, edited) — added a
+  `MIN_LOADING_MS = 700` floor (`holdLoadingUntil`): the retrieval, synthesis and
+  topic-reopen loading panels now stay up at least 700ms even on an instant response.
+  Also gave `handleSelectTopic` (re-opening an existing topic) the same `retrieving`
+  loading panel it was missing. WHY: GAP 1 — frozen-UI reads as broken, not slow.
+
+---
+
 ## [2026-08-24 | 10:55 WIB | Monday | 24 August 2026]
 
 UI/UX polish pass (brief #9): custom inline-SVG icon system, consolidated button
