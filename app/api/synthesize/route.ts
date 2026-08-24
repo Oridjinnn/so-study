@@ -16,6 +16,7 @@ import { verifyTier1 } from "@/src/lib/tier1";
 import { runVerification } from "@/src/lib/verification";
 import { computeGauge, type GaugeResult } from "@/src/lib/gauge";
 import { mapWithConcurrencyLimit } from "@/src/lib/concurrency";
+import { normalizeModule } from "@/src/lib/normalize";
 import {
   GUARD_STATUS,
   LIMITS,
@@ -67,9 +68,11 @@ Struktur wajib, TEPAT URUTAN berikut (gunakan heading "##" untuk bagian tingkat 
 5. Perbandingan/kontras antar konsep atau teori (jika relevan).
 6. Rangkuman bab — ringkasan akhir modul (Gagné event 9: retensi/transfer), plus catatan eksplisit yang menghubungkan KEMBALI ke Tujuan Pembelajaran dari bagian 1 (apakah yang dijanjikan sudah dibahas).
 7. Daftar istilah kunci (glosarium) — istilah + definisi satu baris, diambil dari konsep yang dibahas (panjang inkremental dengan nilai belajar nyata).
-PANJANG & KEDALAMAN: modul ini ditargetkan setara MINIMAL 10 HALAMAN A4 (≈ 5000 kata). Isi tiap sub-bagian konsep (bagian 4) dengan penjelasan MENDALAM + contoh + refleksi, bukan ringkasan pendek; sub-bagian konseplah yang mencapai panjang halaman, bukan penambahan prose lain. Bahas SETIAP paper sumber secara eksplisit dan beri porsi seimbang antarpaper.
-Sitasi inline WAJIB: setiap klaim yang diambil dari sebuah paper harus disitir dengan nomor [n] sesuai urutan paper di bawah (Paper 1 = [1], Paper 2 = [2], dst).
-Akhiri dengan daftar bernomor "Sources:" yang merekap tiap paper (satu baris per paper, diawali nomor yang sama dengan sitasi inline-nya).`;
+ KEDALAMAN, BUKAN PANJANG: utamakan ANALISIS MENDALAM daripada jumlah kata. JANGAN mengulang poin yang sama (mis. transisi "state-centric → multi-actor") di beberapa bagian berbeda hanya untuk menambah halaman; SETIAP bagian harus menambah ANALISIS BARU, bukan mengulang redaksi bagian sebelumnya (hindari repetisi kata-demi-kata). Bahas SETIAP paper sumber secara eksplisit dan beri porsi seimbang antarpaper; jika poin sudah cukup, henti — jangan membanjiri prose.
+ KONTEKS WAKTU & TEMPAT (5W1H): untuk SETIAP teori/regime/konsep, NYATAKAN asal-usul & perkembangannya secara TEMPORAL (Kapan: dekade/era/periode lahir & berkembangnya) DAN GEOGRAFIS/SOSIAL (Di mana: tradisi regional, lingkungan institusional, atau konteks sosial-politik di mana ia muncul). Esai 5W1H menuntut groundedness temporal-geografis ini; jangan biarkan teori melayang tanpa kapan & di mana.
+ DISIPLIN SITASI: setiap SATU klaim faktual HARUS membawa TEPAT SATU sitasi inline [n] yang menunjuk ke paper asalnya. JANGAN menumpuk banyak sitasi ([1][4][5][6][7]) pada satu kalimat generik yang kabur; sebarkan klaim ke barisnya masing-masing dan sitir sumber spesifiknya. Klaim tanpa sitasi = klaim terlarang.
+ Sitasi inline WAJIB: setiap klaim yang diambil dari sebuah paper harus disitir dengan nomor [n] sesuai urutan paper di bawah (Paper 1 = [1], Paper 2 = [2], dst).
+ Akhiri dengan daftar bernomor "Sources:" yang merekap tiap paper (satu baris per paper, diawali nomor yang sama dengan sitasi inline-nya).`;
 }
 
 // ---------------------------------------------------------------------------
@@ -385,6 +388,10 @@ export async function POST(req: NextRequest) {
     } catch {
       synthesisText = result.text;
     }
+
+    // Deterministic post-generation cleanup (typos/casing artifacts like
+    // "TIngkatan", "state- centric", inconsistent "So-study") before persistence.
+    synthesisText = normalizeModule(synthesisText);
 
     // Auto-generate a recall essay prompt from the module. The rubric is now
     // built by the harness (buildEssayRubric) from the module's own structure —

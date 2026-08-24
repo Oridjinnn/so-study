@@ -90,6 +90,30 @@ describe("buildSystem — disciplinary framing", () => {
       expect(prompt).toContain("Sources:");
     }
   });
+
+  it("drops the 5000-word/padding floor in favour of depth and no-restatement", () => {
+    const prompt = buildSystem("MK", "Antropologi");
+    // The old page-count floor must be gone.
+    expect(prompt).not.toContain("5000 kata");
+    expect(prompt).not.toContain("MINIMAL 10 HALAMAN");
+    // New depth-over-length + no-repeat directive is present.
+    expect(prompt).toContain("KEDALAMAN, BUKAN PANJANG");
+    expect(prompt.toLowerCase()).toContain("jangan mengulang");
+  });
+
+  it("requires temporal (Kapan) and geographic/social (Di mana) grounding of concepts", () => {
+    const prompt = buildSystem("MK", "Antropologi");
+    expect(prompt).toContain("Kapan");
+    expect(prompt).toContain("Di mana");
+    expect(prompt.toLowerCase()).toContain("5w1h");
+  });
+
+  it("enforces one-claim-one-citation discipline (no lumping)", () => {
+    const prompt = buildSystem("MK", "Antropologi");
+    expect(prompt).toContain("TEPAT SATU sitasi");
+    expect(prompt.toLowerCase()).toContain("jangan menumpuk");
+    expect(prompt).toContain("Klaim tanpa sitasi = klaim terlarang");
+  });
 });
 
 // ---------------------------------------------------------------------------

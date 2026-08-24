@@ -13,6 +13,83 @@ Format per entry:
 
 ---
 
+## [2026-08-24 | 09:10 WIB | Monday | 24 August 2026]
+
+P1 quality pass on generated-module OUTPUT (the real reason the module "masih
+banyak kekurangan"), driven by inspecting the actual exported PDF for
+"Tingkatan aktor dan level hukum yang terikat pada aktor". Three workstreams,
+executed in parallel by subagents and integrated/verified afterward. The earlier
+concept-corruption bug class was already closed in the 2026-08-23 entry; this PDF
+was generated from the PRE-fix build, so regenerating with current code removes
+those three surfaces. The defects below are what our earlier work did NOT touch.
+
+### BUG — retrieval pulled an off-topic paper (semantic false match)
+
+- EVIDENCE: the generated module cited source [7] "Hukum Kufur dalam Dunia
+  Akting: Kajian Fikih Kontemporer atas Praktik Profesi Aktor dan Akidah" — a
+  paper about ACTORS as performers/artists and Islamic jurisprudence, irrelevant
+  to the HI topic. It matched only because Indonesian "aktor" is polysemous
+  (agent-in-IR vs performer). Lexical scoring cannot catch this; semantic
+  scoring is required. The source set was also loosely related overall.
+- FILE: src/lib/scoring.ts (lines 142–163 `semanticRelevance`, 126 `cosineSimilarity`,
+  211–238 `dedupePapers`, 290–309 semantic drop in `selectShortlist`, 253–267
+  `semanticThreshold`/`minSemanticCount` options) — edited.
+- FILE: src/lib/sources/index.ts (lines 5–9 import, 88–105 semantic scoring step
+  with try/catch fallback, 100–105 `selectShortlist` now passes
+  `semanticThreshold`) — edited. New constant `SEMANTIC_RELEVANCE_THRESHOLD = 0.2`.
+- BEFORE: `retrieveSources` ranked purely on lexical overlap and forced a 10-paper
+  shortlist, so an off-topic polysemous paper reached synthesis and the module.
+- AFTER: each candidate is embedded and scored by cosine similarity to the topic;
+  candidates below 0.2 are dropped before ranking. A floor (`minSemanticCount`,
+  default 4) prevents starving synthesis, and ANY embedding failure falls back to
+  the previous lexical behaviour (the filter is best-effort, never hard-fails).
+- FILE: src/lib/sources/index.test.ts (lines 29 gemini mock, 110–150 two new
+  tests) — the off-topic paper is dropped while the relevant one is kept, and a
+  forced embedding failure keeps both (no drop, no throw).
+
+### CHANGE — synthesis prompt tightened (depth over padding, 5W1H grounding, citation discipline)
+
+- FILE: app/api/synthesize/route.ts (lines 45 `buildSystem`, 70 prompt floor) — edited.
+- BEFORE (line 70): `PANJANG & KEDALAMAN: modul ini ditargetkan setara MINIMAL 10
+  HALAMAN A4 (≈ 5000 kata). …` — forced a word-count floor that produced
+  restated "state-centric → multi-actor" filler across sections; the essay's
+  5W1H asked Kapan/Di mana but the module gave no temporal/geographic grounding;
+  citations were lumped like `[1][4][5][6][7]` on generic sentences.
+- AFTER: the floor is replaced with "KEDALAMAN, BUKAN PANJANG" — prefer depth,
+  DO NOT restate the same point across sections, each section adds NEW analysis;
+  explicit "KONTEKS WAKTU & TEMPAT (5W1H)" instruction to state each theory's
+  temporal (Kapan) and geographic/social (Di mana) provenance; and "DISIPLIN
+  SITASI" — one claim → exactly one inline `[n]`, no lumping, uncited claims
+  forbidden. The required `### Nama Konsep` per-concept structure and all
+  grounding/citation invariants are preserved.
+- FILE: app/api/synthesize/route.test.ts — new assertions that the prompt contains
+  "Kapan", "Di mana", a no-restate instruction, and citation-discipline phrasing;
+  existing `buildSystem`/`tenancy` tests still pass.
+
+### CHANGE — deterministic post-generation normalizer
+
+- FILE: src/lib/normalize.ts (lines 1–?, new) + src/lib/normalize.test.ts (21 tests, new).
+- Fixes cosmetic artifacts seen in the PDF: `TIngkatan`→`Tingkatan`;
+  `state- centric`/`state –centric` (stray spaces / en-em dash)→`state-centric`;
+  brand token `So-study`/`so-study`→`So-Study` (header/footer only); title-cases
+  the module's H1. Conservative and idempotent — citations, URLs, DOIs, numbers
+  and academic terms are untouched.
+- FILE: app/api/synthesize/route.ts (lines 1–2 import, 390–392) — `synthesisText`
+  is passed through `normalizeModule` before persistence, so every stored module
+  (and its derived essay/rubric/chunks) is cleaned exactly once.
+
+### VERIFICATION
+
+- `npm run ci`: 954 tests pass (was 928), 0 eslint errors (1 pre-existing
+  warning in citations.test.ts), typecheck clean. New coverage: semantic drop +
+  fallback (sources), prompt directives (synthesize), normalizer rules + idempotency.
+- NOTE: the semantic threshold (0.2) and the 5000-word removal are judgement
+  calls tuned without a live embedding run; they should be re-checked on the next
+  real generation. The single highest-leverage remaining risk is retrieval
+  relevance on noisier topics — the threshold is the knob to turn.
+
+---
+
 ## [2026-08-23 | 23:56 WIB | Sunday | 23 August 2026]
 
 Quality pass: corrupted "key concepts" export (root cause + regression pins),

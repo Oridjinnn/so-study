@@ -1,5 +1,10 @@
 // Pure, deterministic heuristic scoring for paper retrieval.
 // No LLM, no IO — unit-tested in scoring.test.ts.
+//
+// `semanticRelevance` (below) is the ONLY function here that does IO: it
+// dynamically imports `@/src/lib/gemini` so the embedding client is never
+// statically pulled into the client bundle (PaperReview.tsx imports this file
+// directly and must stay server-free). Every other helper stays pure.
 
 export interface ScoringPaper {
   title: string;
@@ -12,6 +17,12 @@ export interface ScoringPaper {
   type?: string;
   /** Journal/conference/series title, when known. */
   venue?: string;
+  /**
+   * Dense cosine similarity (0..1, occasionally negative) between the topic and
+   * this paper's `title + abstract` embedding. Populated only when the semantic
+   * filter runs; absent on the lexical-only / embedding-failure fallback path.
+   */
+  semanticRelevance?: number;
 }
 
 /**
@@ -103,6 +114,128 @@ export function relevanceScore(
   return Math.round((0.6 * overlap + 0.25 * citationNorm + 0.15 * recency + langBonus) * 1000) / 1000;
 }
 
+// ---------------------------------------------------------------------------
+// Semantic relevance (dense retrieval) — Change: drop off-topic via meaning,
+// not lexical overlap. Lexical `relevanceScore` matches "aktor" the IR agent
+// and "aktor" the performer equally; cosine similarity over embeddings does
+// not, which is exactly the failure we are closing (see task brief).
+// ---------------------------------------------------------------------------
+
+/** Cosine similarity of two equal-length vectors, in [-1, 1]. Returns 0 for a
+ *  zero/degenerate vector so callers never divide by zero. Pure. */
+export function cosineSimilarity(a: number[], b: number[]): number {
+  if (a.length === 0 || b.length === 0) return 0;
+  const n = Math.min(a.length, b.length);
+  let dot = 0;
+  let na = 0;
+  let nb = 0;
+  for (let i = 0; i < n; i++) {
+    dot += a[i] * b[i];
+    na += a[i] * a[i];
+    nb += b[i] * b[i];
+  }
+  if (na === 0 || nb === 0) return 0;
+  return dot / (Math.sqrt(na) * Math.sqrt(nb));
+}
+
+/**
+ * Dense relevance of each paper to the topic, as cosine similarity between the
+ * topic embedding and the paper's `title + abstract` embedding. Returns one
+ * score per input paper, in input order.
+ *
+ * This is the only IO function in the module: it dynamically imports
+ * `@/src/lib/gemini` (so the embedding client stays out of the client bundle)
+ * and calls `embedTexts`. It is best-effort by contract — it REJECTS on any
+ * embedding failure (missing key, network, surprise shape) and the caller is
+ * expected to catch and fall back to lexical scoring. It never returns partial
+ * or fabricated scores.
+ */
+export async function semanticRelevance(
+  topic: string,
+  papers: { title: string; abstract?: string }[]
+): Promise<number[]> {
+  if (papers.length === 0) return [];
+  const { embedTexts } = await import("@/src/lib/gemini");
+  const texts = [topic, ...papers.map((p) => `${p.title}. ${p.abstract ?? ""}`)];
+  const vectors = await embedTexts(texts);
+  const topicVec = vectors[0];
+  return papers.map((_, i) => cosineSimilarity(topicVec, vectors[i + 1]));
+}
+
+// ---------------------------------------------------------------------------
+// Dedupe — near-identical titles or same first-author + year.
+// ---------------------------------------------------------------------------
+
+/** Normalize a title to a comparable key: lowercase, alnum-only, single spaces. */
+export function normalizePaperTitle(t: string): string {
+  return t
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+/** Stable key for the FIRST author (ignores initials/separators). */
+function firstAuthorKey(authors: string | undefined): string {
+  const first = (authors ?? "").split(/,| and /i)[0]?.trim().toLowerCase() ?? "";
+  return first.replace(/[^a-z0-9]+/g, " ");
+}
+
+/** Classic Levenshtein edit distance (small strings only). */
+function levenshtein(a: string, b: string): number {
+  const m = a.length;
+  const n = b.length;
+  if (m === 0) return n;
+  if (n === 0) return m;
+  const prev = new Array<number>(n + 1);
+  const cur = new Array<number>(n + 1);
+  for (let j = 0; j <= n; j++) prev[j] = j;
+  for (let i = 1; i <= m; i++) {
+    cur[0] = i;
+    for (let j = 1; j <= n; j++) {
+      const cost = a[i - 1] === b[j - 1] ? 0 : 1;
+      cur[j] = Math.min(prev[j] + 1, cur[j - 1] + 1, prev[j - 1] + cost);
+    }
+    for (let j = 0; j <= n; j++) prev[j] = cur[j];
+  }
+  return prev[n];
+}
+
+/**
+ * Drop near-duplicate papers: keep the first occurrence of each work.
+ * A paper is considered a duplicate of an already-kept one when either:
+ *   - their normalized titles are identical, or near-identical (edit distance
+ *     <= 2 on sufficiently long titles), or
+ *   - they share the same first author AND publication year.
+ * Pure and order-stable (keeps the earliest-seen). The caller still runs
+ * `dedupeAndMerge` (DOI-based) upstream; this catches same-work diff-DOI and
+ * same-author/year collisions that DOI grouping misses.
+ */
+export function dedupePapers<T extends { title: string; year: number; authors?: string }>(
+  papers: T[]
+): T[] {
+  const out: T[] = [];
+  for (const p of papers) {
+    const titleKey = normalizePaperTitle(p.title);
+    const authorKey = firstAuthorKey(p.authors);
+    const isDup = out.some((q) => {
+      const qTitle = normalizePaperTitle(q.title);
+      const titleDup =
+        qTitle === titleKey ||
+        (titleKey.length >= 8 &&
+          qTitle.length >= 8 &&
+          levenshtein(qTitle, titleKey) <= 2);
+      const authorDup =
+        authorKey.length > 0 &&
+        firstAuthorKey(q.authors) === authorKey &&
+        q.year === p.year;
+      return titleDup || authorDup;
+    });
+    if (!isDup) out.push(p);
+  }
+  return out;
+}
+
 export interface ShortlistOptions {
   /** Absolute floor on how many papers to keep. Default 2. */
   minCount?: number;
@@ -118,6 +251,20 @@ export interface ShortlistOptions {
   minInternational?: number;
   /** If true, fill the floor by recency when relevance is weak. Default true. */
   useRecencyFallback?: boolean;
+  /**
+   * When papers carry a `semanticRelevance` score (set by the semantic filter),
+   * drop every candidate scoring BELOW this cosine threshold before ranking.
+   * Papers without a `semanticRelevance` value are treated as the lexical-only
+   * fallback and are never dropped on this axis.
+   */
+  semanticThreshold?: number;
+  /**
+   * Floor on how many semantic-passing papers the shortlist keeps. The drop
+   * only applies when at least this many papers clear `semanticThreshold`;
+   * otherwise the best semantic candidates are kept so synthesis still has
+   * material (never drop below this unless fewer papers pass). Default 4.
+   */
+  minSemanticCount?: number;
 }
 
 /**
@@ -140,8 +287,29 @@ export function selectShortlist<T extends ScoringPaper>(
   const useRecencyFallback = opts.useRecencyFallback ?? true;
   if (papers.length === 0) return [];
 
-  const maxCitations = papers.reduce((m, p) => Math.max(m, p.citationCount), 0);
-  const scored = papers.map((p) => ({
+  // Semantic drop: when candidates carry a `semanticRelevance` score, discard
+  // the off-topic ones (below threshold) BEFORE lexical ranking so irrelevant
+  // polysemous matches (e.g. "aktor" the IR agent vs. "aktor" the performer)
+  // never reach synthesis. The floor guarantees we never starve synthesis: the
+  // drop applies only when enough papers clear the threshold, otherwise we keep
+  // what passed (or fall back to all papers when none carry a score at all).
+  const semanticThreshold = opts.semanticThreshold;
+  const minSemanticCount = opts.minSemanticCount ?? 4;
+  let pool = papers;
+  if (semanticThreshold !== undefined) {
+    const scored = papers.filter((p) => typeof p.semanticRelevance === "number");
+    if (scored.length > 0) {
+      const passing = papers.filter(
+        (p) =>
+          typeof p.semanticRelevance === "number" &&
+          p.semanticRelevance >= semanticThreshold
+      );
+      pool = passing.length >= minSemanticCount ? passing : passing.length > 0 ? passing : papers;
+    }
+  }
+
+  const maxCitations = pool.reduce((m, p) => Math.max(m, p.citationCount), 0);
+  const scored = pool.map((p) => ({
     p,
     score: relevanceScore(p, terms, { maxCitations }),
   }));
@@ -150,13 +318,13 @@ export function selectShortlist<T extends ScoringPaper>(
   const cap = maxCount && maxCount >= minCount ? maxCount : undefined;
   const k = Math.min(
     cap ?? Number.MAX_SAFE_INTEGER,
-    Math.max(minCount, Math.ceil(papers.length / 4)),
+    Math.max(minCount, Math.ceil(pool.length / 4)),
   );
   let top = scored.slice(0, k);
 
   const best = top[0]?.score ?? 0;
-  if (useRecencyFallback && best < 0.15 && papers.length > k) {
-    const byRecency = [...papers]
+  if (useRecencyFallback && best < 0.15 && pool.length > k) {
+    const byRecency = [...pool]
       .sort((a, b) => b.year - a.year)
       .slice(0, minCount);
     const seen = new Set(byRecency.map((p) => p.title));

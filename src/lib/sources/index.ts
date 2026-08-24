@@ -11,7 +11,17 @@
 // Promise.allSettled. We only throw when EVERY provider failed (true offline),
 // matching the callers' "surface the failure, never fabricate" contract.
 
-import { relevanceScore, selectShortlist, internationalQuotaForMajor } from "@/src/lib/scoring";
+import {
+  relevanceScore,
+  selectShortlist,
+  internationalQuotaForMajor,
+  semanticRelevance,
+} from "@/src/lib/scoring";
+
+// Cosine-similarity floor for the semantic relevance filter. Below this, a
+// candidate is treated as off-topic (e.g. "aktor" the IR agent vs. the
+// performer) and dropped before it can reach synthesis. Tunable.
+const SEMANTIC_RELEVANCE_THRESHOLD = 0.2;
 import {
   dedupeAndMerge,
   type RetrieveOptions,
@@ -81,6 +91,19 @@ export async function retrieveSources(
   const merged = dedupeAndMerge(collected);
   const enriched = await enrichCitations(merged).catch(() => merged);
 
+  // Semantic relevance (best-effort): embed the topic + each paper and score
+  // them by cosine similarity, so polysemous/off-topic matches are dropped
+  // before they can reach synthesis. On ANY embedding failure we fall back to
+  // lexical-only scoring (the previous behaviour) by simply not stamping
+  // `semanticRelevance`, which selectShortlist then ignores.
+  let semanticallyScored: SourcePaper[] = enriched;
+  try {
+    const scores = await semanticRelevance(query, enriched);
+    semanticallyScored = enriched.map((p, i) => ({ ...p, semanticRelevance: scores[i] }));
+  } catch {
+    semanticallyScored = enriched;
+  }
+
   // Ranking terms stay concise (the caller may pass expanded search keywords);
   // a long term list would dilute every paper's overlap score toward zero.
   const terms = opts.scoringTerms?.length
@@ -88,7 +111,7 @@ export async function retrieveSources(
     : keywords.length
       ? keywords
       : [query];
-  const scored: SourcePaper[] = enriched.map((p) => ({ ...p, relevanceScore: 0 }));
+  const scored: SourcePaper[] = semanticallyScored.map((p) => ({ ...p, relevanceScore: 0 }));
 
   // selectShortlist returns the SAME objects we passed in, so mapping back is a
   // direct reference walk — no id tagging needed. The review presents exactly 10
@@ -101,6 +124,7 @@ export async function retrieveSources(
     minCount: 10,
     maxCount: 10,
     minInternational: internationalQuotaForMajor(opts.major),
+    semanticThreshold: SEMANTIC_RELEVANCE_THRESHOLD,
   });
   return shortlist.map((p) => ({
     ...p,
