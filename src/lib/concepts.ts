@@ -252,13 +252,17 @@ export function extractKeyConcepts(markdown: string, limit = 6): string[] {
   //   3. Loose intro prose / a comma-joined run-on (older, flatter modules).
   // Structured sources win so connective tissue (e.g. the lead-in "Untuk
   // memahami lanskap hukum, …") is never mined as a concept.
-  for (const title of headingTitles) {
-    // The heading is the term: keep it whole, minus any "— penjelasan" tail and
-    // any parenthetical gloss ("(*Street-Level Bureaucrat*)"), which is where
-    // the old fixed-length slice used to cut inside a bold marker.
-    if (push(sanitizeConcept(termSide(title).split("(")[0], { clampWords: null, maxChars: 48 })))
-      return concepts;
-  }
+   for (const title of headingTitles) {
+     // The heading is the term: keep it whole, minus any "— penjelasan" tail and
+     // any parenthetical gloss ("(*Street-Level Bureaucrat*)"), which is where
+     // the old fixed-length slice used to cut inside a bold marker. Indonesian
+     // academic concept names are often 50–70 chars (e.g. "Aktor Selain Negara
+     // dalam Hukum Humaniter Internasional"), so the cap must be well above that
+     // — otherwise legitimate long concepts are silently dropped from the rubric
+     // and the essay prompt.
+     if (push(sanitizeConcept(termSide(title).split("(")[0], { clampWords: null, maxChars: 90 })))
+       return concepts;
+   }
 
   for (const entry of numberedEntries) {
     // A numbered list entry is one term — prefer the bold wrapper, keep balanced

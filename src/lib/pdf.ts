@@ -24,6 +24,8 @@ import type { InlineRun } from "@/app/lib/markdownBlocks";
 import type { ExportModule, RubricSection } from "./export";
 import { parseRubric } from "./export";
 import { formatAPA } from "@/src/lib/citation";
+import { buildEssayRubric, generateEssayPromptHarness, isEssayPromptUsable, isEssayRubricUsable } from "@/src/lib/essay";
+import { extractKeyConcepts } from "@/src/lib/concepts";
 
 // Roboto is bundled in pdfmake's vfs; assign it once at module load.
 pdfMake.vfs = pdfFonts;
@@ -82,34 +84,13 @@ export function hasUnbalancedParens(s: string): boolean {
   return depth !== 0;
 }
 
-// Clean fallbacks used when a guidance line or the whole rubric is corrupted.
-// They mirror the deterministic harness rubric (src/lib/essay.ts) so a degraded
-// worksheet still coaches the student instead of showing broken text.
+// Clean fallback used when every guidance line is corrupted. It mirrors the
+// deterministic harness rubric (src/lib/essay.ts) so a degraded worksheet still
+// coaches the student instead of showing broken text.
 const FALLBACK_GUIDANCE = [
   "Sebelum membuka sumber, ringkas modul ini dengan kata sendiri untuk menguji ingatan (recall).",
   "Susun bukti → analisis → kesimpulan; jawab kerangka 5W1H (Apa/Siapa/Kapan/Di mana/Mengapa/Bagaimana) untuk topik ini (penalaran).",
 ];
-
-const FALLBACK_RUBRIC = [
-  "Rubrik esai (dibuat otomatis dari struktur modul):",
-  "",
-  "A. Penulisan (clarity):",
-  "  - Bahasa jelas, terstruktur, dan kohesif; setiap paragraf fokus pada satu ide.",
-  "  - Istilah modul digunakan tepat; tidak ada ambiguitas atau salah kaprah besar.",
-  "",
-  "B. Penafsiran (interpretation):",
-  "  - Menafsirkan konsep kunci yang ada di modul secara akurat.",
-  "  - Menafsirkan klaim/argumen tiap sumber secara akurat, bukan sekadar mengutip.",
-  "",
-  "C. Penalaran (reasoning):",
-  "  - Argumen logis dan runtut: bukti → analisis → kesimpulan; menjawab kerangka",
-  "    5W1H (Apa/Siapa/Kapan/Di mana/Mengapa/Bagaimana) untuk topik ini.",
-  "  - Mengaitkan argumen dari tiap sumber (paper) dengan sitasi yang tepat.",
-  "  - Membandingkan/mengontraskan antar teori bila relevan.",
-  "",
-  "D. Relevansi:",
-  "  - Menyimpulkan relevansi topik untuk mata kuliah ini.",
-].join("\n");
 
 /** Drops corrupted guidance lines; falls back to a clean list when all are bad.
  *  Returns [] when no guidance was supplied, so callers preserve the original
@@ -118,12 +99,6 @@ function safeStudyGuidance(guidance: string[] | undefined): string[] {
   if (!guidance?.length) return [];
   const clean = guidance.filter((g) => !hasUnbalancedParens(g));
   return clean.length ? clean : FALLBACK_GUIDANCE;
-}
-
-/** Returns a clean rubric string, substituting the fallback when corrupted. */
-function safeRubric(rubric: string | undefined): string {
-  if (!rubric?.trim()) return FALLBACK_RUBRIC;
-  return hasUnbalancedParens(rubric) ? FALLBACK_RUBRIC : rubric;
 }
 
 /** Maps inline markdown runs to pdfmake text fragments (strings or styled objects). */
@@ -518,20 +493,37 @@ export async function generateWorksheetPdf(m: ExportModule): Promise<Uint8Array>
     content.push(callout("Petunjuk belajar", safeStudyGuidance(m.studyGuidance)));
   }
 
-  if (m.essayPrompt?.trim()) {
+  // The essay prompt and rubric were stored at synthesis time and can be stale
+  // or corrupted (e.g. a pre-fix row whose concept list atomised into section
+  // headings like "Modul Belajar" / "Setelah membaca modul ini,"). When the
+  // module actually has these (the student's worksheet always does), rebuild them
+  // deterministically from the module's own synthesis text so a garbage stored
+  // value can never reach the printed sheet.
+  const concepts = m.keyConcepts?.length ? m.keyConcepts : extractKeyConcepts(m.contentMarkdown);
+  const storedPrompt = m.essayPrompt?.trim() ?? "";
+  const essayPrompt = storedPrompt && isEssayPromptUsable(storedPrompt, concepts)
+    ? storedPrompt
+    : generateEssayPromptHarness(m.contentMarkdown, m.topicTitle);
+
+  if (storedPrompt) {
     content.push(heading("Pertanyaan esai (recall)", "h2"));
-    content.push({ text: runsToFragments(parseInline(m.essayPrompt.trim())), style: "p" });
+    content.push({ text: runsToFragments(parseInline(essayPrompt)), style: "p" });
+    if (m.essayRubric?.trim()) {
+      // Rubric: keep the stored one only when it actually cites this module's
+      // real concepts; a corrupted (pre-fix) row that cited section-heading
+      // fragments ("Modul Belajar") is rebuilt deterministically from the
+      // module's real key concepts so garbage never reaches the printed sheet.
+      const rubric = isEssayRubricUsable(m.essayRubric, concepts)
+        ? m.essayRubric
+        : buildEssayRubric(m.contentMarkdown);
+      const rubricSections = parseRubric(rubric);
+      content.push(rule());
+      content.push(heading("Rubrik penilaian", "h3"));
+      if (rubricSections.length) content.push(...rubricToContent(rubricSections));
+      else content.push({ text: runsToFragments(parseInline(rubric.trim())), style: "p" });
+    }
   } else {
     content.push({ text: "Modul ini belum memiliki pertanyaan esai.", style: "p" });
-  }
-
-  if (m.essayRubric?.trim()) {
-    content.push(rule());
-    content.push(heading("Rubrik penilaian", "h3"));
-    const rubric = safeRubric(m.essayRubric);
-    const sections = m.rubricSections ?? parseRubric(rubric);
-    if (sections.length) content.push(...rubricToContent(sections));
-    else content.push({ text: runsToFragments(parseInline(rubric.trim())), style: "p" });
   }
 
   content.push(rule());

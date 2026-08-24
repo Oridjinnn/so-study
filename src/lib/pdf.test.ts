@@ -174,3 +174,68 @@ describe("worksheet/reading PDF must not print truncated concepts (BUG reported)
     expect(hasUnbalancedParens(text), "no unbalanced parens after guard").toBe(false);
   }, 30000);
 });
+
+// ---------------------------------------------------------------------------
+// Regression for the "severe regression" worksheet: a module whose stored
+// essayPrompt / essayRubric atomised into SECTION-HEADING fragments
+// ("Modul Belajar", "Setelah membaca modul ini,", "Topik "Tingkatan Aktor dan",
+// "Sinergi inter") instead of the module's real key concepts. The worksheet must
+// rebuild both from the module's own synthesis text, never trusting the stale
+// stored values.
+// ---------------------------------------------------------------------------
+const CLEAN_CONCEPTS_MODULE = [
+  "# Tingkatan Aktor dan Level Hukum yang Terikat pada Aktor",
+  "",
+  "## Konsep kunci & definisi",
+  "",
+  "### Aktor Selain Negara dalam Hukum Humaniter Internasional",
+  "kelompok bersenjata non-negara yang terikat norma internasional.",
+  "",
+  "### Sinergi Aktor Non-Pemerintah dan Pemerintah dalam Hukum Lingkungan",
+  "kolaborasi ormas/LSM dengan instrumen pemerintah.",
+  "",
+  "### Diskresi Birokrat Tingkat Tapak",
+  "ruang kebebasan aparatur lapangan dalam regulasi publik.",
+].join("\n");
+
+describe("worksheet must rebuild prompt/rubric from real concepts (severe regression)", () => {
+  it("drops stored section-heading fragments and uses the module's real concepts", async () => {
+    const mod: ExportModule = {
+      topicTitle: "Tingkatan Aktor dan Level Hukum yang Terikat pada Aktor",
+      courseNames: ["Hukum Internasional"],
+      generatedAt: "2026-08-24",
+      contentMarkdown: CLEAN_CONCEPTS_MODULE,
+      sourcePapers: [],
+      // Exactly the corrupted stored values seen on the regressed worksheet PDF.
+      essayPrompt:
+        'Tulis esai berdasarkan modul "Tingkatan aktor...".\n\n' +
+        "Panduan 5W1H:\n" +
+        '- Bagaimana: Bagaimana Modul Belajar, Setelah membaca modul ini,, Topik "Tingkatan Aktor dan, Sinergi inter diaplikasikan antar sumber?\n\n' +
+        'Gunakan Modul Belajar, Setelah membaca modul ini,, Topik "Tingkatan Aktor dan, Sinergi inter, rujuk sumber.',
+      essayRubric:
+        "Rubrik esai:\nB. Penafsiran:\n" +
+        '  - Menafsirkan konsep kunci "Modul Belajar" secara akurat.\n' +
+        '  - Menafsirkan konsep kunci "Setelah membaca modul ini," secara akurat.\n' +
+        '  - Menafsirkan konsep kunci "Topik "Tingkatan Aktor dan" secara akurat.\n' +
+        '  - Menafsirkan konsep kunci "Sinergi inter" secara akurat.',
+    };
+
+    const buf = await generateWorksheetPdf(mod);
+    const { text } = await new PDFParse({ data: Buffer.from(buf) }).getText();
+    const clean = compress(text);
+
+    // The corrupted section-heading fragments must be GONE entirely.
+    expect(clean, "drops 'Modul Belajar' fragment").not.toContain("ModulBelajar");
+    expect(clean, "drops 'Setelah membaca modul ini' fragment").not.toContain("Setelahmembacamodulini");
+    expect(clean, "drops 'Topik \"Tingkatan Aktor dan' fragment").not.toContain('Topik"TingkatanAktordan');
+    expect(clean, "drops 'Sinergi inter' fragment").not.toContain("Sinerginter");
+
+    // The rubric must instead anchor to the module's REAL key concepts.
+    expect(clean, "rubric uses real concept 1").toContain("AktorSelainNegaradalamHukumHumaniterInternasional");
+    expect(clean, "rubric uses real concept 2").toContain("SinergiAktorNon-PemerintahdanPemerintahdalamHukumLingkungan");
+
+    // And the essay prompt must be the clean, concept-anchored harness prompt.
+    expect(clean, "prompt uses real concept 1").toContain("AktorSelainNegaradalamHukumHumaniterInternasional");
+    expect(hasUnbalancedParens(text), "no unbalanced parens (guard)").toBe(false);
+  }, 30000);
+});

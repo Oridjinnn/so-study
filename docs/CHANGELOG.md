@@ -39,6 +39,20 @@ printed verbatim.
 
 ---
 
+## [2026-08-24 | 14:47 WIB | Monday | 24 August 2026]
+
+Severe regression on the worksheet PDF (`…tingkatan-aktor-dan-level-hukum-yang-terikat-pada-aktor-3.pdf`): the 5W1H essay prompt and the rubric cited SECTION-HEADING fragments ("Modul Belajar", "Setelah membaca modul ini,", `Topik "Tingkatan Aktor dan`, "Sinergi inter") instead of the module's real key concepts. Root cause: `generateWorksheetPdf` (and the Markdown export) printed the `essayPrompt`/`essayRubric` stored at synthesis time — a row synthesised BEFORE the concept extractor was hardened, so it carried the old garbage. The concepts *display* section was clean only because it renders the module body markdown, not the stored fields.
+
+- FILE: src/lib/concepts.ts (line ~263, edited) — `extractKeyConcepts` capped `###` concept-heading terms at `maxChars: 48`, which silently dropped legitimate long Indonesian concept names (e.g. "Aktor Selain Negara dalam Hukum Humaniter Internasional" ≈ 54 chars, "Sinergi Aktor Non-Pemerintah dan Pemerintah dalam Hukum Lingkungan" ≈ 64 chars). Raised the cap to `90` so real (long) concepts survive into the rubric/essay prompt.
+- FILE: src/lib/essay.ts (edited) — added `isEssayPromptUsable(prompt, concepts)` and `isEssayRubricUsable(rubric, concepts)`. A stored prompt is kept only when it actually anchors to ≥1 real key concept; a stored rubric is kept only when parenthesis-balanced AND every concept it cites is one of the module's real concepts (or it uses a different valid shape like "1. Definisi 2. Contoh"). Otherwise the caller rebuilds from the module's real concepts.
+- FILE: src/lib/pdf.ts (edited) — `generateWorksheetPdf` now rebuilds the essay prompt (harness) and the rubric (`buildEssayRubric`) from the module's own synthesis text whenever the stored values are detected as corrupted, instead of printing them verbatim. `safeRubric`/`FALLBACK_RUBRIC` removed as dead code (the rubric is now always rebuilt deterministically).
+- FILE: src/lib/export.ts (edited) — `toMarkdown` applies the same usable-check: keeps a valid stored rubric, rebuilds a corrupted one, so the Markdown export never launders garbage.
+- FILE: src/lib/pdf.test.ts (edited) — regression test: a module whose stored prompt/rubric atomise into the exact section-heading fragments from the report still produces a worksheet whose rubric/prompt anchor to the real concepts ("Aktor Selain Negara dalam Hukum Humaniter Internasional", …) with no unbalanced parentheses.
+
+WHY: GAP — the worksheet is the deliverable she reads/prints, so a stale/corrupted stored prompt or rubric must never reach it. Rebuilding deterministically from the module body makes the worksheet self-healing regardless of DB row age.
+
+---
+
 ## [2026-08-24 | 12:45 WIB | Monday | 24 August 2026]
 
 Two export/UX defects fixed (reported on the worksheet PDF

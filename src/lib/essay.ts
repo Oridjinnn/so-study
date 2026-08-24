@@ -235,3 +235,62 @@ export function buildEssayRubric(content: string): string {
     "  - Menyimpulkan relevansi topik untuk mata kuliah ini.",
   ].join("\n");
 }
+
+/**
+ * Whether a stored essay prompt is safe to ship. The prompt must anchor to the
+ * module's own key concepts — when it instead drifts into section-heading
+ * fragments ("Modul Belajar", "Setelah membaca modul ini,") it is useless to the
+ * student and must be replaced by the deterministic harness prompt
+ * (`generateEssayPromptHarness`). We trust the prompt only when it actually
+ * contains at least one of the module's real key-concept terms.
+ */
+export function isEssayPromptUsable(
+  prompt: string | null | undefined,
+  concepts: string[],
+): boolean {
+  if (!prompt?.trim()) return false;
+  if (concepts.length === 0) return true; // nothing to anchor against; trust stored
+  const norm = (s: string) => s.toLowerCase().replace(/\s+/g, " ");
+  const np = norm(prompt);
+  return concepts.some((c) => np.includes(norm(c)));
+}
+
+/** True when a stored rubric has no dangling open/close parenthesis. */
+function rubricHasBalancedParens(s: string): boolean {
+  let depth = 0;
+  for (const ch of s) {
+    if (ch === "(") depth++;
+    else if (ch === ")") {
+      depth--;
+      if (depth < 0) return false;
+    }
+  }
+  return depth === 0;
+}
+
+/**
+ * Whether a stored essay rubric is safe to ship. A corrupted rubric is one that
+ * lists concept-interpretation criteria referencing concept names that are NOT
+ * among the module's real key concepts — the exact "severe regression" shape
+ * where the rubric cited section-heading fragments ("Modul Belajar",
+ * "Setelah membaca modul ini,", "Topik "Tingkatan Aktor dan"") instead of the
+ * module's actual terms. We trust the stored rubric only when it is
+ * parenthesis-balanced AND every concept it cites is one of the module's real
+ * concepts (or it follows a different, non-concept-citation shape entirely, e.g.
+ * "1. Definisi 2. Contoh", which is a valid alternate rubric we must not
+ * overwrite). When it fails, the caller rebuilds the rubric deterministically
+ * from the module's real concepts.
+ */
+export function isEssayRubricUsable(
+  rubric: string | null | undefined,
+  concepts: string[],
+): boolean {
+  if (!rubric?.trim()) return false;
+  if (!rubricHasBalancedParens(rubric)) return false;
+  const refs = [...rubric.matchAll(/Menafsirkan konsep kunci "([^"]+)"/gi)].map((m) => m[1]);
+  if (refs.length === 0) return true; // alternate rubric shape; trust it
+  if (concepts.length === 0) return true;
+  const norm = (s: string) => s.toLowerCase().replace(/\s+/g, " ");
+  const nc = concepts.map(norm);
+  return refs.some((r) => nc.includes(norm(r)));
+}

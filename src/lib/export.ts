@@ -19,6 +19,7 @@
 import { slugifyHeading } from "@/app/lib/study";
 import { analyzeModuleContent, deriveStudyGuidance } from "@/app/lib/pdfExtract";
 import { formatAPA } from "./citation";
+import { buildEssayRubric, generateEssayPromptHarness, isEssayPromptUsable, isEssayRubricUsable } from "./essay";
 import type { PaperType } from "./sources/types";
 
 export type ExportFormat = "md" | "anki" | "pdf" | "pdf-worksheet";
@@ -173,10 +174,29 @@ export function toMarkdown(m: ExportModule): string {
     m.contentMarkdown.trim(),
   ];
 
-  if (m.essayPrompt?.trim()) {
-    parts.push("", "---", "", "## Pertanyaan esai (recall)", "", m.essayPrompt.trim());
-    if (m.essayRubric?.trim()) {
-      parts.push("", "### Rubrik penilaian", "", m.essayRubric.trim());
+  // A module that actually has an essay prompt/rubric stored may carry a STALE
+  // or corrupted version (a pre-fix row whose concept list atomised into
+  // section-heading fragments). When present, rebuild both deterministically
+  // from the module's own synthesis text so the Markdown export never launders
+  // garbage into a file the student reads/screenshots. Modules without a stored
+  // prompt keep the prior behaviour of omitting the section.
+  const hasPrompt = !!m.essayPrompt?.trim();
+  const hasRubric = !!m.essayRubric?.trim();
+  if (hasPrompt) {
+    const concepts = analyzeModuleContent(m.contentMarkdown).keyConcepts;
+    const essayPrompt =
+      isEssayPromptUsable(m.essayPrompt, concepts)
+        ? m.essayPrompt!.trim()
+        : generateEssayPromptHarness(m.contentMarkdown, m.topicTitle);
+    parts.push("", "---", "", "## Pertanyaan esai (recall)", "", essayPrompt);
+    if (hasRubric) {
+      // Keep the stored rubric unless it is corrupted (cites section-heading
+      // fragments instead of the module's real concepts) — in that case rebuild
+      // it deterministically from the module's real key concepts.
+      const rubric = isEssayRubricUsable(m.essayRubric, concepts)
+        ? m.essayRubric!.trim()
+        : buildEssayRubric(m.contentMarkdown);
+      parts.push("", "### Rubrik penilaian", "", rubric);
     }
   }
 
