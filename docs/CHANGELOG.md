@@ -13,6 +13,32 @@ Format per entry:
 
 ---
 
+## [2026-08-24 | 13:20 WIB | Monday | 24 August 2026]
+
+Defense-in-depth guard so a corrupted key-concept can NEVER reach the student's
+PDF, closing gap #1 from the honest-readiness review. The extractor
+(`extractKeyConcepts`) already rejects unbalanced parens, but a rubric/guidance
+row written BEFORE that fix can still sit in the database and would otherwise be
+printed verbatim.
+
+- FILE: src/lib/pdf.ts (lines ~64–127, ~383, ~451–468, edited) — added
+  `hasUnbalancedParens` + `safeStudyGuidance`/`safeRubric`. Both `generatePdf`
+  (reading) and `generateWorksheetPdf` (rubric) now drop any guidance line /
+  rubric carrying a dangling open parenthesis and substitute a clean fallback
+  (mirrors the deterministic harness rubric) instead of printing broken text.
+  `safeStudyGuidance` returns `[]` when nothing was supplied, so the original
+  "no callout" behaviour is preserved. WHY: GAP 1 — the worksheet is the
+  deliverable she actually reads/prints, so it must never show garbage.
+- FILE: src/lib/pdf.test.ts (edited) — e2e regression: a module written as the
+  failing FLAT NUMBERED concept list renders whole, balanced terms
+  ("Aktor Selain Negara (Non-State Armed Groups)", "Pemetaan Jaringan Aktor
+  (Actor-Network Mapping)") in BOTH PDFs with zero unbalanced parentheses; plus
+  a guard test proving a pre-fix corrupted row is dropped / replaced by the
+  clean fallback. This is the #2 verification: the reported corruption shape no
+  longer reaches the PDF.
+
+---
+
 ## [2026-08-24 | 12:45 WIB | Monday | 24 August 2026]
 
 Two export/UX defects fixed (reported on the worksheet PDF

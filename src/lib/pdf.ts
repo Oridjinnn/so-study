@@ -61,6 +61,71 @@ export function sanitizeCell(cell: string): string {
   return s;
 }
 
+/**
+ * Last line of defence for the student-facing PDF. A dangling open parenthesis
+ * is the signature of a truncated concept fragment (e.g. "Aktor Selain Negara
+ * (Non") — it can only reach here from data written BEFORE the concept
+ * extractor was hardened (a stale `essayRubric` row in the database) or from a
+ * caller that bypassed `extractKeyConcepts`. The current pipeline can never
+ * produce it, but such a fragment must never be printed for the student to read
+ * or print. Returns true when the string would render as visibly broken.
+ */
+export function hasUnbalancedParens(s: string): boolean {
+  let depth = 0;
+  for (const ch of s) {
+    if (ch === "(") depth++;
+    else if (ch === ")") {
+      depth--;
+      if (depth < 0) return true;
+    }
+  }
+  return depth !== 0;
+}
+
+// Clean fallbacks used when a guidance line or the whole rubric is corrupted.
+// They mirror the deterministic harness rubric (src/lib/essay.ts) so a degraded
+// worksheet still coaches the student instead of showing broken text.
+const FALLBACK_GUIDANCE = [
+  "Sebelum membuka sumber, ringkas modul ini dengan kata sendiri untuk menguji ingatan (recall).",
+  "Susun bukti → analisis → kesimpulan; jawab kerangka 5W1H (Apa/Siapa/Kapan/Di mana/Mengapa/Bagaimana) untuk topik ini (penalaran).",
+];
+
+const FALLBACK_RUBRIC = [
+  "Rubrik esai (dibuat otomatis dari struktur modul):",
+  "",
+  "A. Penulisan (clarity):",
+  "  - Bahasa jelas, terstruktur, dan kohesif; setiap paragraf fokus pada satu ide.",
+  "  - Istilah modul digunakan tepat; tidak ada ambiguitas atau salah kaprah besar.",
+  "",
+  "B. Penafsiran (interpretation):",
+  "  - Menafsirkan konsep kunci yang ada di modul secara akurat.",
+  "  - Menafsirkan klaim/argumen tiap sumber secara akurat, bukan sekadar mengutip.",
+  "",
+  "C. Penalaran (reasoning):",
+  "  - Argumen logis dan runtut: bukti → analisis → kesimpulan; menjawab kerangka",
+  "    5W1H (Apa/Siapa/Kapan/Di mana/Mengapa/Bagaimana) untuk topik ini.",
+  "  - Mengaitkan argumen dari tiap sumber (paper) dengan sitasi yang tepat.",
+  "  - Membandingkan/mengontraskan antar teori bila relevan.",
+  "",
+  "D. Relevansi:",
+  "  - Menyimpulkan relevansi topik untuk mata kuliah ini.",
+].join("\n");
+
+/** Drops corrupted guidance lines; falls back to a clean list when all are bad.
+ *  Returns [] when no guidance was supplied, so callers preserve the original
+ *  "no callout" behaviour instead of inventing a generic one. */
+function safeStudyGuidance(guidance: string[] | undefined): string[] {
+  if (!guidance?.length) return [];
+  const clean = guidance.filter((g) => !hasUnbalancedParens(g));
+  return clean.length ? clean : FALLBACK_GUIDANCE;
+}
+
+/** Returns a clean rubric string, substituting the fallback when corrupted. */
+function safeRubric(rubric: string | undefined): string {
+  if (!rubric?.trim()) return FALLBACK_RUBRIC;
+  return hasUnbalancedParens(rubric) ? FALLBACK_RUBRIC : rubric;
+}
+
 /** Maps inline markdown runs to pdfmake text fragments (strings or styled objects). */
 function runsToFragments(runs: InlineRun[]): Array<string | Record<string, unknown>> {
   return runs.map((run) => {
@@ -379,9 +444,10 @@ export async function generatePdf(m: ExportModule): Promise<Uint8Array> {
   ];
 
   // Derived study-guidance callout: frames recall/reasoning near the top so the
-  // PDF itself coaches the student, not just displays the module.
+  // PDF itself coaches the student, not just displays the module. Guarded so a
+  // corrupted (pre-fix) guidance line can never reach the printed page.
   if (m.studyGuidance?.length) {
-    content.push(callout("Petunjuk belajar", m.studyGuidance));
+    content.push(callout("Petunjuk belajar", safeStudyGuidance(m.studyGuidance)));
   }
 
   content.push(...blocksToContent(m.contentMarkdown));
@@ -449,7 +515,7 @@ export async function generateWorksheetPdf(m: ExportModule): Promise<Uint8Array>
   ];
 
   if (m.studyGuidance?.length) {
-    content.push(callout("Petunjuk belajar", m.studyGuidance));
+    content.push(callout("Petunjuk belajar", safeStudyGuidance(m.studyGuidance)));
   }
 
   if (m.essayPrompt?.trim()) {
@@ -462,9 +528,10 @@ export async function generateWorksheetPdf(m: ExportModule): Promise<Uint8Array>
   if (m.essayRubric?.trim()) {
     content.push(rule());
     content.push(heading("Rubrik penilaian", "h3"));
-    const sections = m.rubricSections ?? parseRubric(m.essayRubric);
+    const rubric = safeRubric(m.essayRubric);
+    const sections = m.rubricSections ?? parseRubric(rubric);
     if (sections.length) content.push(...rubricToContent(sections));
-    else content.push({ text: runsToFragments(parseInline(m.essayRubric.trim())), style: "p" });
+    else content.push({ text: runsToFragments(parseInline(rubric.trim())), style: "p" });
   }
 
   content.push(rule());
