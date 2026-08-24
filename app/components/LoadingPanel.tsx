@@ -62,14 +62,14 @@ export default function LoadingPanel({
 
   return (
     <div
-      className="fixed inset-0 z-40 flex items-end justify-center bg-black/30 p-4 backdrop-blur-[1px] sm:items-center"
+      className="load-overlay fixed inset-0 z-40 flex items-end justify-center bg-black/30 p-4 backdrop-blur-[1px] sm:items-center"
       // Not a dialog: nothing here is actionable and nothing may be dismissed,
       // so it must not trap focus. It is a live status region.
       role="status"
       aria-live="polite"
       aria-busy="true"
     >
-      <div className="w-full max-w-lg rounded-2xl border border-border bg-card p-5 shadow-xl">
+      <div className="load-card w-full max-w-lg rounded-2xl border border-border bg-card p-5 shadow-xl">
         <div className="mb-1 flex items-center gap-2">
           <span
             aria-hidden="true"

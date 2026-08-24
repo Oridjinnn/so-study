@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { isStandalone } from "../lib/standalone";
 import { apiFetch } from "../lib/api";
+import { PRIMARY_CLASS, GHOST_CLASS } from "./ui";
 
 const DISMISS_KEY = "so-study:push-optin-dismissed";
 
@@ -135,14 +136,14 @@ export default function PushOptIn() {
               type="button"
               onClick={enable}
               disabled={busy}
-              className="rounded-card bg-brand-600 px-3 py-1.5 font-medium text-white transition hover:bg-brand-700 disabled:opacity-60"
+              className={PRIMARY_CLASS}
             >
               {busy ? "Mengaktifkan…" : "Aktifkan pengingat Soso"}
             </button>
             <button
               type="button"
               onClick={dismiss}
-              className="tap min-h-11 rounded-card px-2 text-muted transition hover:text-foreground focus-visible:ring-2 focus-visible:ring-brand-500 focus-visible:outline-none"
+              className={GHOST_CLASS}
             >
               Nanti
             </button>

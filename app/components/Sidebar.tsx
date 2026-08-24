@@ -4,6 +4,8 @@ import { useEffect, useState } from "react";
 import Modal from "./Modal";
 import DataBackup from "./DataBackup";
 import AccountBar from "./AccountBar";
+import Icon from "./Icon";
+import { PRIMARY_CLASS, SECONDARY_CLASS } from "./ui";
 import type { CourseSummary } from "../lib/types";
 
 /** localStorage key holding the *explicit* theme choice; absent = follow the OS. */
@@ -61,40 +63,36 @@ function ThemeToggle() {
     }
   }
 
-  return (
-    <button
-      type="button"
-      onClick={toggle}
-      title="Ganti tema terang/gelap"
-      className="tap flex min-h-11 w-full items-center justify-center gap-2 rounded-card border border-border px-3 py-2 text-sm font-medium text-muted transition hover:bg-zinc-100 dark:hover:bg-zinc-800"
-    >
-      <span aria-hidden="true">🌓</span> Tema
-    </button>
-  );
+    return (
+      <button
+        type="button"
+        onClick={toggle}
+        title="Ganti tema terang/gelap"
+        className={SECONDARY_CLASS}
+      >
+        <Icon name="theme" /> Tema
+      </button>
+    );
 }
 
 function NewTopicButton({ onClick }: { onClick: () => void }) {
   return (
-    <button
-      type="button"
-      onClick={onClick}
-      className="tap flex min-h-11 w-full items-center justify-center gap-2 rounded-card bg-brand-600 px-3 py-3 text-sm font-medium text-white transition hover:bg-brand-700 active:scale-[0.99]"
-    >
-      <span className="text-lg leading-none">+</span> Topik baru
-    </button>
+      <button
+        type="button"
+        onClick={onClick}
+        className={PRIMARY_CLASS}
+      >
+        <Icon name="plus" /> Topik baru
+      </button>
   );
 }
 
 /** Semester-level action: many courses at once, next to the course list it fills. */
 function BatchImportButton({ onClick }: { onClick: () => void }) {
   return (
-    <button
-      type="button"
-      onClick={onClick}
-      className="tap flex min-h-11 w-full items-center justify-center gap-2 rounded-card border border-border px-3 py-2 text-sm font-medium text-muted transition hover:bg-zinc-100 dark:hover:bg-zinc-800"
-    >
-      Impor semester
-    </button>
+      <button type="button" onClick={onClick} className={SECONDARY_CLASS}>
+        Impor semester
+      </button>
   );
 }
 
@@ -127,7 +125,7 @@ function CourseList({
             type="button"
             onClick={() => onSelectCourse(c.id)}
             aria-current={active ? "true" : undefined}
-            className={`tap block w-full rounded-card px-3 py-2 text-left transition ${
+            className={`tap block w-full rounded-card px-3 py-2.5 text-left transition ${
               active
                 ? "bg-brand-500/10 ring-1 ring-brand-500"
                 : "hover:bg-zinc-100 dark:hover:bg-zinc-800/60"
@@ -174,14 +172,14 @@ export default function Sidebar({
       {/* Desktop/iPad-landscape rail. Hidden below `md`, where the same nav is
           reachable from the hamburger below. */}
       <aside className="hidden w-64 shrink-0 flex-col border-r border-border bg-card/70 md:flex">
-        <div className="space-y-2 p-3">
+        <div className="space-y-3 p-4">
           <NewTopicButton onClick={onNew} />
           {onBatchImport && <BatchImportButton onClick={onBatchImport} />}
           <ThemeToggle />
           <DataBackup />
           <AccountBar />
         </div>
-        <nav className="flex-1 space-y-2 overflow-y-auto px-2 pb-4">
+        <nav className="flex-1 space-y-2.5 overflow-y-auto px-2 pb-4">
           <CourseList
             courses={courses}
             activeCourseId={activeCourseId}
@@ -198,9 +196,9 @@ export default function Sidebar({
         onClick={() => setDrawerOpen(true)}
         aria-haspopup="dialog"
         aria-expanded={drawerOpen}
-        className="tap fixed top-[4.5rem] left-3 z-30 flex min-h-11 min-w-11 items-center justify-center rounded-card border border-border bg-card text-lg shadow-lg md:hidden"
+        className="tap fixed top-[4.5rem] left-3 z-30 flex min-h-11 min-w-11 items-center justify-center rounded-card border border-border bg-card text-foreground shadow-lg md:hidden"
       >
-        <span aria-hidden="true">☰</span>
+        <Icon name="menu" />
         <span className="sr-only">Buka daftar mata kuliah</span>
       </button>
 
@@ -211,7 +209,7 @@ export default function Sidebar({
           onClose={() => setDrawerOpen(false)}
           className="mr-auto max-w-xs"
         >
-          <div className="flex max-h-[70vh] flex-col gap-2 p-3">
+          <div className="flex max-h-[70vh] flex-col gap-3 p-4">
             <NewTopicButton
               onClick={() => {
                 setDrawerOpen(false);
@@ -226,7 +224,7 @@ export default function Sidebar({
                 }}
               />
             )}
-            <nav className="min-h-0 flex-1 space-y-2 overflow-y-auto">
+            <nav className="min-h-0 flex-1 space-y-2.5 overflow-y-auto">
               <CourseList
                 courses={courses}
                 activeCourseId={activeCourseId}

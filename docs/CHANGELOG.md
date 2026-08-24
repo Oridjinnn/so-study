@@ -13,6 +13,96 @@ Format per entry:
 
 ---
 
+## [2026-08-24 | 10:55 WIB | Monday | 24 August 2026]
+
+UI/UX polish pass (brief #9): custom inline-SVG icon system, consolidated button
+classes with breathable spacing + micro-interactions, fade in/out on the loading
+panel and modal, and a brand-tinted skeleton shimmer. Zero new dependencies;
+every animation is reduced-motion safe.
+
+- FILE: app/components/Icon.tsx (new) — inline stroke `<Icon name=…/>` (theme, sun,
+  moon, menu, plus, search, download, save, bell, book, chevron-down, close, check,
+  trash, backup, account), `aria-hidden`, `currentColor` so it inherits `text-brand-*`/
+  `text-muted`. Added app/components/Icon.dom.test.tsx.
+- FILE: app/components/Sidebar.tsx (lines 69–86, 196–203, 177–191, 226, 212, edited) —
+  replaced emoji icons 🌓→`<Icon name="theme"/>` and ☰→`<Icon name="menu"/>` (kept text
+  labels); action buttons now use `PRIMARY_CLASS`/`SECONDARY_CLASS`; desktop rail
+  `space-y-2 p-3`→`space-y-3 p-4`, nav `space-y-2`→`space-y-2.5`, course items `py-2`→
+  `py-2.5`, drawer gap `2`→`3` (breathable). WHY: T1/T2/T6.
+- FILE: app/components/ui.ts (edited) — added `GHOST_CLASS`; unified `PRIMARY_CLASS`/
+  `SECONDARY_CLASS` on one `BTN_BASE` (`rounded-card`, 150ms transition, `hover:shadow-sm`,
+  `active:scale-[0.98]`, `motion-reduce:transition-none motion-reduce:active:scale-100`,
+  `.tap`/44px). WHY: T2.
+- FILE: app/components/AccountBar.tsx (line 59–67, edited) — "Keluar" button →
+  `SECONDARY_CLASS`. WHY: T2.
+- FILE: app/components/DataBackup.tsx (lines 89–119, edited) — export/import buttons →
+  `SECONDARY_CLASS`/`PRIMARY_CLASS`, added `download`/`save`/`backup` icons. WHY: T2.
+- FILE: app/components/PushOptIn.tsx (lines 134–148, edited) — enable/dismiss buttons →
+  `PRIMARY_CLASS`/`GHOST_CLASS`. WHY: T2.
+- FILE: app/components/Modal.tsx (lines 44–47, 58–77, 174, 196–209, edited) — card
+  `rounded-2xl`→`rounded-card`; animated mount/unmount (`mounted`/`closing` state + 200ms
+  delayed unmount) so `.modal-overlay`/`.modal-card` fade+scale via `@starting-style`;
+  confirm buttons `rounded-xl`→`rounded-card`. Focus trap, Esc-to-close, scroll lock and
+  focus restoration unchanged. WHY: T4.
+- FILE: app/components/LoadingPanel.tsx (lines 64–72, edited) — overlay/card get
+  `load-overlay`/`load-card` for a fade+scale-in on mount (parent-driven unmount, so exit
+  is instant). WHY: T3.
+- FILE: app/components/Skeletons.tsx (edited) — `animate-pulse` gray blocks →
+  `.skeleton-shimmer` (brand-tinted gradient, theme-token driven for dark mode). WHY: T5.
+- FILE: app/globals.css (appended) — `@media (prefers-reduced-motion: no-preference)`
+  block with `.load-overlay`/`.modal-overlay`/`.load-card`/`.modal-card` transitions +
+  `@starting-style` enter and `.closing` exit; `skel-shimmer` keyframes + `.skeleton-shimmer`
+  utility + explicit `prefers-reduced-motion: reduce` guard. WHY: T3/T4/T5.
+
+## [2026-08-24 | 09:25 WIB | Monday | 24 August 2026]
+
+P2 — module TITLE becomes a first-class, multi-mode retrieval signal (semantic +
+heuristic + keyword), so the shortlist is driven by the title even when the
+student types NO keywords. The P1 semantic filter already DROPPED off-topic papers
+via the title embedding, but the title only shaped RECALL (provider `search`) and
+the off-topic drop — never the RANKING. Retrieval therefore still leaned on the
+user's keywords for ordering. P2 fuses three title-derived signals into the
+ranked `relevanceScore`.
+
+### CHANGE — fused title-driven ranking across three modes
+
+- FILE: src/lib/scoring.ts (lines 147–180, new `titleHeuristicScore`) — pure,
+  deterministic overlap of a paper's `title+abstract` with the title's own
+  significant tokens AND adjacent bigrams (the title used as its own phrase-level
+  query). Bounded [0,1].
+- FILE: src/lib/scoring.ts (lines 362–366, 383, edited `selectShortlist`) — added
+  `scoreOf(p)` that honors a caller-stamped `relevanceScore` (falling back to the
+  lexical `relevanceScore` only when none is set). Both the main sort and the
+  recency fallback now rank by it. Added optional `relevanceScore?: number` to the
+  `ScoringPaper` interface.
+- FILE: src/lib/sources/index.ts (lines 71, 107–145, edited `retrieveSources`) —
+  computes a FUSED score per paper before `selectShortlist` and stamps it on
+  `relevanceScore`: `0.5*keyword + 0.2*heuristic + 0.3*semantic` when an embedding
+  ran, else `0.7*keyword + 0.3*heuristic` on the embedding-failure path. `keyword`
+  = lexical overlap with `terms` (already folds in the title's tokens + user
+  keywords); `heuristic` = `titleHeuristicScore(p, query)` (the title as query);
+  `semantic` = `semanticRelevance(title, papers)` cosine. Removed the old post-hoc
+  lexical recompute; `selectShortlist` now ranks by the fused score.
+- FILE: src/lib/sources/types.ts (edited `SourcePaper`) — added optional
+  `semanticRelevance?: number` (the aggregator stamps it; was previously an
+  untyped extra property that typecheck rejected once read directly).
+- FILE: src/lib/scoring.test.ts (new `titleHeuristicScore` block, 4 tests) and
+  src/lib/sources/index.test.ts (new "ranks by title's heuristic+semantic signal
+  with no user keywords" integration test).
+
+### WHY
+
+- USER DIRECTIVE: "Judul modul juga bisa menjadi semantic atau heuristic search
+  juga atau keyword match, bukan hanya pakai kata kunci." The title must drive
+  retrieval in all three modes, not only the user's keywords. Concretely: a topic
+  "Kebijakan fiskal dan inflasi" now ranks a "kebijakan fiskal" paper above an
+  unrelated "Teori moneter" paper with ZERO typed keywords, via the title's
+  bigram/phrase overlap plus the title embedding.
+- RULE G0/E0/I0/I12 — change logged here with file+line; doc/code drift avoided by
+  typing `semanticRelevance` on `SourcePaper`. CI re-run: `npm run ci` PASS —
+  eslint 0 errors (1 pre-existing unrelated warning in citations.test.ts), tsc
+  clean, vitest **959 passed** (91 files).
+
 ## [2026-08-24 | 09:10 WIB | Monday | 24 August 2026]
 
 P1 quality pass on generated-module OUTPUT (the real reason the module "masih

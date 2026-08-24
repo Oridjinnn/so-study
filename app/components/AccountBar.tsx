@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { apiFetch } from "../lib/api";
+import { SECONDARY_CLASS } from "./ui";
 
 // Who is signed in. Rendered from a CLIENT fetch of `/api/auth/session` — NOT
 // from server props — because the service worker caches ONE app shell shared by
@@ -61,7 +62,7 @@ export default function AccountBar() {
         onClick={signOut}
         disabled={signingOut}
         title="Keluar dari akun ini"
-        className="tap min-h-11 shrink-0 rounded-card border border-border px-3 py-1.5 text-sm font-medium text-muted transition hover:bg-zinc-100 focus-visible:ring-2 focus-visible:ring-brand-500 focus-visible:outline-none disabled:opacity-50 dark:hover:bg-zinc-800"
+        className={`${SECONDARY_CLASS} shrink-0`}
       >
         Keluar
       </button>

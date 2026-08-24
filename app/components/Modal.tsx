@@ -42,14 +42,44 @@ export default function Modal({
   const onCloseRef = useRef(onClose);
   const confirmCloseRef = useRef(confirmClose);
   const [confirmingDiscard, setConfirmingDiscard] = useState(false);
+  const [mounted, setMounted] = useState(open);
+  const [closing, setClosing] = useState(false);
+  const closeTimer = useRef<number | null>(null);
 
   useEffect(() => {
     onCloseRef.current = onClose;
     confirmCloseRef.current = confirmClose;
   }, [onClose, confirmClose]);
 
+  // Animated mount/unmount: keep the dialog in the DOM while it fades out so the
+  // transition (see `.modal-overlay`/`.modal-card` in `app/globals.css`) can play.
+  // Focus trap, Esc-to-close, scroll lock and focus restoration are unchanged and
+  // run on the real `open` change below; reduced-motion users skip the transition.
   useEffect(() => {
-    if (!open) return;
+    /* eslint-disable react-hooks/set-state-in-effect -- intentional: drives the delayed unmount that lets the fade-out transition play */
+    if (closeTimer.current) {
+      clearTimeout(closeTimer.current);
+      closeTimer.current = null;
+    }
+    if (open) {
+      setMounted(true);
+      setClosing(false);
+      setConfirmingDiscard(false);
+    } else if (mounted) {
+      setClosing(true);
+      closeTimer.current = window.setTimeout(() => setMounted(false), 200);
+    }
+    return () => {
+      if (closeTimer.current) {
+        clearTimeout(closeTimer.current);
+        closeTimer.current = null;
+      }
+    };
+    /* eslint-enable react-hooks/set-state-in-effect */
+  }, [open, mounted]);
+
+  useEffect(() => {
+    if (!open || !mounted) return;
 
     previouslyFocused.current =
       (document.activeElement as HTMLElement | null) ?? null;
@@ -116,13 +146,15 @@ export default function Modal({
       }
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open]);
+  }, [open, mounted]);
 
-  if (!open) return null;
+  if (!mounted) return null;
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-end justify-center bg-black/40 p-4 sm:items-center"
+      className={`fixed inset-0 z-50 flex items-end justify-center bg-black/40 p-4 sm:items-center modal-overlay${
+        closing ? " closing pointer-events-none" : ""
+      }`}
       onClick={() => {
         if (confirmingDiscard) {
           setConfirmingDiscard(false);
@@ -141,9 +173,9 @@ export default function Modal({
         aria-modal="true"
         aria-labelledby={titleId}
         tabIndex={-1}
-        className={`relative w-full rounded-2xl bg-card shadow-xl outline-none ${
+        className={`relative w-full rounded-card bg-card shadow-xl outline-none modal-card ${
           className ?? ""
-        }`}
+        }${closing ? " closing pointer-events-none" : ""}`}
         onClick={(event) => event.stopPropagation()}
       >
         {labelledById ? null : (
@@ -169,14 +201,14 @@ export default function Modal({
                   setConfirmingDiscard(false);
                   onClose();
                 }}
-                className="rounded-xl bg-red-600 px-3 py-1.5 text-sm font-medium text-white transition-colors duration-150 hover:bg-red-500"
+                className="tap rounded-card bg-red-600 px-3 py-1.5 text-sm font-medium text-white transition-colors duration-150 hover:bg-red-500 focus-visible:ring-2 focus-visible:ring-brand-500 focus-visible:outline-none"
               >
                 Ya
               </button>
               <button
                 type="button"
                 onClick={() => setConfirmingDiscard(false)}
-                className="rounded-xl border border-border px-3 py-1.5 text-sm font-medium transition-colors duration-150 hover:bg-zinc-100 dark:hover:bg-zinc-800"
+                className="tap rounded-card border border-border px-3 py-1.5 text-sm font-medium transition-colors duration-150 hover:bg-zinc-100 focus-visible:ring-2 focus-visible:ring-brand-500 focus-visible:outline-none dark:hover:bg-zinc-800"
               >
                 Batal
               </button>

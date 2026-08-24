@@ -359,3 +359,66 @@ body {
     word-break: break-all;
   }
 }
+
+/* T3 / T4 — overlay + card enter (fade + slight scale-in) via `@starting-style`,
+   gated to `prefers-reduced-motion: no-preference` so reduced-motion users get the
+   instant resting state (the global `:225` guard also collapses this to a step).
+   Exit reuses the `.closing` modifier so the panel/modal fades out before its
+   parent unmounts it. No animation library; one keyframe-free transition each. */
+@media (prefers-reduced-motion: no-preference) {
+  .load-overlay,
+  .modal-overlay {
+    transition: opacity 160ms ease;
+  }
+  .load-card,
+  .modal-card {
+    transition: opacity 180ms ease, transform 180ms ease;
+  }
+  @starting-style {
+    .load-overlay,
+    .modal-overlay {
+      opacity: 0;
+    }
+    .load-card,
+    .modal-card {
+      opacity: 0;
+      transform: translateY(8px) scale(0.98);
+    }
+  }
+  .load-overlay.closing,
+  .modal-overlay.closing {
+    opacity: 0;
+  }
+  .load-card.closing,
+  .modal-card.closing {
+    opacity: 0;
+    transform: translateY(8px) scale(0.98);
+  }
+}
+
+/* T5 — brand-tinted skeleton shimmer. Uses theme tokens (--color-border /
+   --color-brand-500) so it adapts to dark mode automatically with no separate
+   `dark:` rule. Reduced-motion: the global `:225` guard freezes the animation. */
+@keyframes skel-shimmer {
+  from {
+    background-position: 200% 0;
+  }
+  to {
+    background-position: -200% 0;
+  }
+}
+.skeleton-shimmer {
+  background-image: linear-gradient(
+    90deg,
+    var(--color-border) 0%,
+    color-mix(in srgb, var(--color-brand-500) 20%, var(--color-border)) 50%,
+    var(--color-border) 100%
+  );
+  background-size: 200% 100%;
+  animation: skel-shimmer 1.4s ease-in-out infinite;
+}
+@media (prefers-reduced-motion: reduce) {
+  .skeleton-shimmer {
+    animation: none;
+  }
+}

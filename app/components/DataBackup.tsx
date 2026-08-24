@@ -2,6 +2,8 @@
 
 import { useRef, useState } from "react";
 import { apiFetch } from "../lib/api";
+import Icon from "./Icon";
+import { PRIMARY_CLASS, SECONDARY_CLASS } from "./ui";
 
 const LAST_EXPORT_KEY = "so-study:lastBackupExport";
 
@@ -91,12 +93,12 @@ export default function DataBackup() {
           type="button"
           onClick={handleExport}
           disabled={status.kind === "busy"}
-          className="tap flex-1 rounded-card border border-border px-3 py-2 text-sm font-medium text-muted transition hover:bg-zinc-100 disabled:opacity-50 dark:hover:bg-zinc-800"
+          className={`${SECONDARY_CLASS} flex-1`}
         >
-          Ekspor data
+          <Icon name="download" /> Ekspor data
         </button>
-        <label className="tap flex-1 cursor-pointer rounded-card border border-border px-3 py-2 text-center text-sm font-medium text-muted transition hover:bg-zinc-100 dark:hover:bg-zinc-800">
-          <span>Pilih berkas</span>
+        <label className={`${SECONDARY_CLASS} flex-1`}>
+          <Icon name="save" /> Pilih berkas
           <input
             ref={fileInputRef}
             type="file"
@@ -112,9 +114,9 @@ export default function DataBackup() {
           type="button"
           onClick={handleImport}
           disabled={status.kind === "busy"}
-          className="tap rounded-card bg-brand-600 px-3 py-2 text-sm font-medium text-white transition hover:bg-brand-700 disabled:opacity-50"
+          className={PRIMARY_CLASS}
         >
-          Impor dan timpa data
+          <Icon name="backup" /> Impor dan timpa data
         </button>
       )}
 
