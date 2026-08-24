@@ -221,3 +221,59 @@ describe("extractKeyConcepts on the real mandated ### structure", () => {
     expect(rubric).not.toMatch(/setelah membaca modul ini/i);
   });
 });
+
+// The shape that actually shipped for the "tingkatan aktor" module: the AI wrote
+// "## Konsep kunci & definisi" as a series of BOLD lead-in paragraphs
+// ("*Nama Konsep (English)*: definisi") with NO `###` sub-headings and NO
+// numbered list. The prior pass fell through to the prose/run-on branch and
+// atomised each bold term at commas / "&" / "dan", so the rubric cited garbage
+// like "Aktor Non-Negara Lokal dan", "Masyarakat Digital dan Pelayanan" and
+// "Local Non-State Actors &". This pins the bold-paragraph path: each bold term
+// becomes ONE clean (Indonesian) concept, with the English gloss dropped.
+const BOLD_MODULE = `## Tujuan Pembelajaran
+
+Setelah membaca modul ini, kamu bisa membedakan tingkatan aktor dan level hukum.
+
+## Konsep kunci & definisi
+
+*Aktor Non-Negara Lokal dan Jaringan Komunikasi (Local Non-State Actors & Communication Networks)*: Entitas non-pemerintah berbasis lokal yang membentuk jaringan komunikasi horizontal.
+*Tata Kelola Banyak Tingkat (Multi-Level Governance & Actor Mapping)*: Kerangka analisis HI yang memetakan hubungan antar-aktor.
+*Masyarakat Digital dan Pelayanan Publik (Digital Society & Public Service Governance)*: Redefinisi kewajiban aktor negara.
+*Aktor Bersenjata Non-Negara dalam Hukum Humaniter Internasional (Non-State Armed Actors in IHL)*: Subjek hukum internasional terbatas.
+*Sinergi Aktor Lingkungan (Environmental Governance Synergy)*: Kolaborasi institusional antara OMS/NGO dan pemerintah.
+*Diskresi Birokrat Tingkat Bawah (Street-Level Bureaucratic Discretion)*: Peran agen individu di tingkat birokrasi pelaksana.
+
+## Penjelasan Mendalam Konsep Kunci
+
+Aktor ekonomi lokal dapat bertindak sebagai non-state actors [1].
+`;
+
+describe("extractKeyConcepts on the bold-paragraph '## Konsep' shape", () => {
+  const concepts = extractKeyConcepts(BOLD_MODULE, 6);
+
+  it("reads every bold lead-in as one clean concept (no comma/&/dan fragments)", () => {
+    expect(concepts.length).toBeGreaterThan(0);
+    expect(concepts).toContain("Aktor Non-Negara Lokal dan Jaringan Komunikasi");
+    expect(concepts).toContain("Tata Kelola Banyak Tingkat");
+    expect(concepts).toContain("Masyarakat Digital dan Pelayanan Publik");
+    expect(concepts).toContain("Aktor Bersenjata Non-Negara dalam Hukum Humaniter Internasional");
+    expect(concepts).toContain("Sinergi Aktor Lingkungan");
+    expect(concepts).toContain("Diskresi Birokrat Tingkat Bawah");
+  });
+
+  it("drops the parenthetical English gloss and keeps terms whole", () => {
+    for (const c of concepts) {
+      expect(c).not.toMatch(/[&]/); // "Local Non-State Actors &" type fragments gone
+      expect(c).not.toMatch(/\(/); // no dangling/embedded paren gloss
+      expect(c).not.toMatch(/setelah membaca modul ini/i);
+    }
+  });
+
+  it("feeds clean concepts to the rubric (no truncated garbage)", () => {
+    const rubric = buildEssayRubric(BOLD_MODULE);
+    expect(rubric).toMatch(/Aktor Non-Negara Lokal dan Jaringan Komunikasi/);
+    expect(rubric).not.toMatch(/Aktor Non-Negara Lokal dan"/); // not "… Lokal dan"
+    expect(rubric).not.toMatch(/Masyarakat Digital dan Pelayanan"/); // not "… Pelayanan"
+    expect(rubric).not.toMatch(/Local Non-State Actors &/);
+  });
+});

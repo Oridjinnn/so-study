@@ -175,7 +175,7 @@ function sanitizeConcept(
 /**
  * Extracts up to `limit` short key-concept terms from a module's markdown.
  *
- * Two candidate sources, in priority order, matching how the synthesis template
+ * Three candidate sources, in priority order, matching how the synthesis template
  * actually writes the "Konsep kunci & definisi" section (see the structure
  * contract in app/api/synthesize/route.ts):
  *   1. The sub-heading titles inside the section ("### Nama Konsep",
@@ -184,7 +184,11 @@ function sanitizeConcept(
  *      first. Reading only the section's loose prose (as an earlier pass did)
  *      returned an empty list for every real module, silently dropping the
  *      concept list from the PDF intro, the essay question and the rubric.
- *   2. The intro prose / list items that sit directly under the section heading
+ *   2. A numbered concept list ("1. **Nama**: …") written as flat prose.
+ *   3. Bold lead-in concept definitions ("*Nama Konsep (English)*: definisi")
+ *      when the AI writes the section as bold paragraphs instead of `###`
+ *      sub-headings or a numbered list — each bold term is read whole.
+ *   4. The intro prose / list items that sit directly under the section heading
  *      before the first sub-heading (older or flatter modules put the concepts
  *      there, sometimes as one comma-joined run-on).
  *
@@ -206,6 +210,7 @@ export function extractKeyConcepts(markdown: string, limit = 6): string[] {
 
   const headingTitles: string[] = [];
   const numberedEntries: string[] = [];
+  const boldEntries: string[] = [];
   const introLines: string[] = [];
   let sawSubHeading = false;
   for (let i = idx + 1; i < lines.length; i++) {
@@ -229,8 +234,22 @@ export function extractKeyConcepts(markdown: string, limit = 6): string[] {
       // parens into garbage like "Aktor Selain Negara (Non" or "Pemetaan
       // Jaringan Aktor (Actor".
       const nm = t.match(/^\d+[.)]\s+([\s\S]*)$/);
-      if (nm) numberedEntries.push(nm[1]);
-      else introLines.push(t);
+      if (nm) {
+        numberedEntries.push(nm[1]);
+        continue;
+      }
+      // A bold lead-in concept definition ("*Nama Konsep (English)*: definisi")
+      // is another way the AI writes the section — every concept as a bold
+      // paragraph rather than a `###` sub-heading. Capture the bold term WHOLE
+      // (the parenthetical English gloss is dropped on the heading path) so it is
+      // read as ONE term, never atomised at commas / "&" / "dan" into garbage
+      // like "Aktor Non-Negara Lokal dan" or "Masyarakat Digital dan Pelayanan".
+      const bm = t.match(/^\*+([^*][\s\S]*?)\*+\s*[:—-]\s/);
+      if (bm) {
+        boldEntries.push(bm[1]);
+        continue;
+      }
+      introLines.push(t);
     }
   }
 
@@ -249,7 +268,8 @@ export function extractKeyConcepts(markdown: string, limit = 6): string[] {
   // section (the AI does not always honour the `###` sub-heading contract):
   //   1. `###` sub-heading titles — one concept per sub-section.
   //   2. A numbered concept list ("1. **Nama**: …") written as flat prose.
-  //   3. Loose intro prose / a comma-joined run-on (older, flatter modules).
+  //   3. Bold lead-in definitions ("*Nama (English)*: definisi") as paragraphs.
+  //   4. Loose intro prose / a comma-joined run-on (older, flatter modules).
   // Structured sources win so connective tissue (e.g. the lead-in "Untuk
   // memahami lanskap hukum, …") is never mined as a concept.
    for (const title of headingTitles) {
@@ -268,6 +288,21 @@ export function extractKeyConcepts(markdown: string, limit = 6): string[] {
     // A numbered list entry is one term — prefer the bold wrapper, keep balanced
     // parentheticals (e.g. "(Actor-Network Mapping)"), drop the ": definisi" tail.
     if (push(conceptFromTerm(entry, 80))) return concepts;
+  }
+
+  // Bold lead-in concept definitions ("*Term (English)*: definisi") — used when
+  // the AI writes the section as bold paragraphs instead of `###` sub-headings or
+  // a numbered list. Same whole-term handling as the heading path (gloss dropped,
+  // generous char cap) so long bilingual names survive intact.
+  if (!headingTitles.length && !numberedEntries.length) {
+    for (const raw of boldEntries) {
+      if (
+        push(
+          sanitizeConcept(termSide(raw).split("(")[0], { clampWords: null, maxChars: 90 }),
+        )
+      )
+        return concepts;
+    }
   }
 
   if (!headingTitles.length && !numberedEntries.length) {

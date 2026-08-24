@@ -39,6 +39,17 @@ printed verbatim.
 
 ---
 
+## [2026-08-24 | 16:03 WIB | Monday | 24 August 2026]
+
+Concept extraction dropped/truncated concepts when the "Konsep kunci & definisi" section is written as BOLD lead-in paragraphs (`*Nama Konsep (English)*: definisi`) instead of `###` sub-headings or a numbered list. `extractKeyConcepts` only recognised the latter two shapes, so the bold paragraphs fell through to the prose/run-on branch and were atomised at commas / "&" / "dan" — the worksheet rubric then cited garbage like "Aktor Non-Negara Lokal dan", "Masyarakat Digital dan Pelayanan", "Local Non-State Actors &". This is the second live defect behind the "tingkatan aktor -4" worksheet (the first — stale inline essay/rubric — was already resolved by the PDF split + rebuild guards; that file was a pre-split artifact).
+
+- FILE: src/lib/concepts.ts (lines ~208, ~225–241, ~267–290, edited) — added a third concept source: bold lead-in definitions (`*Term (English)*: definisi` / `**Term**: definisi`). Detected with `^\*+([^*][\s\S]*?)\*+\s*[:—-]\s`; the bold term is kept WHOLE (parenthetical English gloss dropped, mirroring the `###` heading path) and read as one concept — never sliced at commas/"&"/"dan". Guarded so it is only used when there are no `###` sub-headings and no numbered list, preserving existing behaviour for those shapes.
+- FILE: src/lib/concepts.test.ts (edited) — new regression suite for the bold-paragraph "## Konsep" shape: every bold term becomes one clean Indonesian concept (no "&"/paren fragments), and the rebuilt rubric contains the full term ("Aktor Non-Negara Lokal dan Jaringan Komunikasi") rather than a truncated one.
+
+WHY: GAP — the worksheet rubric must anchor to the module's REAL, whole concept names; a second extraction shape was silently producing truncated garbage for modules the AI writes as bold paragraphs.
+
+---
+
 ## [2026-08-24 | 14:47 WIB | Monday | 24 August 2026]
 
 Severe regression on the worksheet PDF (`…tingkatan-aktor-dan-level-hukum-yang-terikat-pada-aktor-3.pdf`): the 5W1H essay prompt and the rubric cited SECTION-HEADING fragments ("Modul Belajar", "Setelah membaca modul ini,", `Topik "Tingkatan Aktor dan`, "Sinergi inter") instead of the module's real key concepts. Root cause: `generateWorksheetPdf` (and the Markdown export) printed the `essayPrompt`/`essayRubric` stored at synthesis time — a row synthesised BEFORE the concept extractor was hardened, so it carried the old garbage. The concepts *display* section was clean only because it renders the module body markdown, not the stored fields.
