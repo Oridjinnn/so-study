@@ -6,6 +6,7 @@ import {
   isInternationalJournal,
   relevanceScore,
   selectShortlist,
+  titleHeuristicScore,
   tokenize,
 } from "./scoring";
 
@@ -49,6 +50,34 @@ describe("relevanceScore", () => {
     expect(id).toBeGreaterThan(fr);
     expect(en).toBeGreaterThan(fr);
     expect(id).toBeGreaterThan(none); // in-language tag earns a bonus; none has no tag
+  });
+});
+
+describe("titleHeuristicScore (P2 — title as its own search query)", () => {
+  it("rewards papers whose text contains the title's tokens and bigrams", () => {
+    const s = titleHeuristicScore(
+      { title: "Tingkatan aktor dalam hukum", abstract: "Membahas tingkatan aktor dan level hukum." },
+      "Tingkatan aktor dan level hukum internasional"
+    );
+    expect(s).toBeGreaterThan(0);
+  });
+  it("returns 0 when the paper shares nothing with the title", () => {
+    const s = titleHeuristicScore(
+      { title: "Quantum computing", abstract: "qubits and gates" },
+      "Tingkatan aktor dan hukum"
+    );
+    expect(s).toBe(0);
+  });
+  it("is bounded in [0,1]", () => {
+    const s = titleHeuristicScore(
+      { title: "hukum internasional aktor tingkatan", abstract: "hukum internasional aktor tingkatan" },
+      "hukum internasional aktor tingkatan"
+    );
+    expect(s).toBeGreaterThanOrEqual(0);
+    expect(s).toBeLessThanOrEqual(1);
+  });
+  it("still scores 0 for an empty/short title", () => {
+    expect(titleHeuristicScore({ title: "x", abstract: "y" }, "ai")).toBe(0);
   });
 });
 

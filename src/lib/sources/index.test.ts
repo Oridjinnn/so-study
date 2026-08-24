@@ -150,4 +150,31 @@ describe("retrieveSources", () => {
     expect(titles).toContain("Relevant actor typology in HI");
     expect(titles).toContain("Offtopic performing arts and fikih");
   });
+
+  it("ranks by the title's own heuristic+semantic signal when no user keywords are given", async () => {
+    // No keywords supplied: retrieval must still be driven by the TITLE itself,
+    // via the title's bigram/phrase overlap (heuristic) and the title embedding
+    // (semantic). "Kebijakan fiskal" should outrank an unrelated "Teori moneter".
+    mocks.oa.mockResolvedValue([
+      mk({
+        title: "Teori moneter dan bank sentral",
+        doi: "10.1/m",
+        provider: "openalex",
+        abstract: "bank sentral mengatur suku bunga dan likuiditas pasar",
+      }),
+      mk({
+        title: "Dampak kebijakan fiskal",
+        doi: "10.1/f",
+        provider: "openalex",
+        abstract: "kebijakan fiskal memengaruhi tingkat inflasi secara langsung",
+      }),
+    ]);
+    mocks.cr.mockResolvedValue([]);
+    mocks.s2.mockResolvedValue([]);
+    mocks.pm.mockResolvedValue([]);
+    mocks.doaj.mockResolvedValue([]);
+
+    const res = await retrieveSources("Kebijakan fiskal dan inflasi", [], { perTopic: 10 });
+    expect(res[0].title).toBe("Dampak kebijakan fiskal");
+  });
 });

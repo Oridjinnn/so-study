@@ -25,6 +25,14 @@ export interface SourcePaper {
   citationCount: number;
   /** Set centrally by the aggregator via scoring.selectShortlist; providers send 0. */
   relevanceScore: number;
+  /**
+   * Dense cosine similarity between the module TITLE and this paper's
+   * `title + abstract` (scoring.semanticRelevance). Stamped by the aggregator
+   * only when the semantic filter runs; absent on the lexical-only /
+   * embedding-failure fallback path. Consumed by selectShortlist's off-topic
+   * drop and by retrieveSources' fused ranking (P2).
+   */
+  semanticRelevance?: number;
   fullTextAvailable: boolean;
   doi?: string;
   venue?: string; // journal title, or publisher for books

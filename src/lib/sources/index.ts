@@ -16,6 +16,7 @@ import {
   selectShortlist,
   internationalQuotaForMajor,
   semanticRelevance,
+  titleHeuristicScore,
 } from "@/src/lib/scoring";
 
 // Cosine-similarity floor for the semantic relevance filter. Below this, a
@@ -111,7 +112,39 @@ export async function retrieveSources(
     : keywords.length
       ? keywords
       : [query];
-  const scored: SourcePaper[] = semanticallyScored.map((p) => ({ ...p, relevanceScore: 0 }));
+
+  // P2 — the MODULE TITLE drives retrieval in ALL THREE modes, not only the
+  // user's keywords. We fuse three signals into one relevance score per paper
+  // and stamp it on the object so selectShortlist ranks by it (it honors a
+  // pre-set relevanceScore):
+  //   • keyword   — lexical overlap of the paper with `terms`. `terms` already
+  //                 folds in the title's own significant tokens plus any user
+  //                 keywords (see scoringTerms), so this is the keyword-match leg.
+  //   • heuristic — titleHeuristicScore: overlap of the paper with the title's
+  //                 OWN tokens AND bigrams (the title used as its own phrase-level
+  //                 query). This is what lets a title like "Kebijakan fiskal dan
+  //                 inflasi" rank a "kebijakan fiskal" paper above an unrelated
+  //                 one even when the student typed no keywords.
+  //   • semantic  — the dense cosine score from semanticRelevance(title, papers)
+  //                 (when embeddings ran): ranks by MEANING, the leg that drops
+  //                 polysemous off-topic matches. On the embedding-failure path
+  //                 semanticRelevance is absent, so the fuse falls back to
+  //                 keyword + heuristic only and degrades gracefully.
+  // The semantic DROP still happens first inside selectShortlist (on
+  // semanticRelevance), so off-topic papers never even reach this ranking.
+  const maxCitations = semanticallyScored.reduce((m, p) => Math.max(m, p.citationCount), 0);
+  const fused: SourcePaper[] = semanticallyScored.map((p) => {
+    const kw = relevanceScore(
+      { title: p.title, abstract: p.abstract, year: p.year, citationCount: p.citationCount, language: p.language },
+      terms,
+      { maxCitations }
+    );
+    const heu = titleHeuristicScore(p, query);
+    const sem = typeof p.semanticRelevance === "number" ? Math.max(0, p.semanticRelevance) : undefined;
+    const relevanceScoreVal =
+      sem !== undefined ? 0.5 * kw + 0.2 * heu + 0.3 * sem : 0.7 * kw + 0.3 * heu;
+    return { ...p, relevanceScore: Math.round(relevanceScoreVal * 1000) / 1000 };
+  });
 
   // selectShortlist returns the SAME objects we passed in, so mapping back is a
   // direct reference walk — no id tagging needed. The review presents exactly 10
@@ -120,17 +153,10 @@ export async function retrieveSources(
   // domestic-literature topics (Indonesian law, local bureaucracy) keep their
   // relevant domestic papers instead of being forced to swap in lower-relevance
   // international ones.
-  const shortlist = selectShortlist(scored, terms, {
+  return selectShortlist(fused, terms, {
     minCount: 10,
     maxCount: 10,
     minInternational: internationalQuotaForMajor(opts.major),
     semanticThreshold: SEMANTIC_RELEVANCE_THRESHOLD,
   });
-  return shortlist.map((p) => ({
-    ...p,
-    relevanceScore: relevanceScore(
-      { title: p.title, abstract: p.abstract, year: p.year, citationCount: p.citationCount, language: p.language },
-      terms
-    ),
-  }));
 }

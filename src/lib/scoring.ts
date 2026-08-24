@@ -23,6 +23,13 @@ export interface ScoringPaper {
    * filter runs; absent on the lexical-only / embedding-failure fallback path.
    */
   semanticRelevance?: number;
+  /**
+   * Pre-set fused relevance score (P2): when the aggregator has already stamped a
+   * combined keyword+heuristic+semantic score on a paper, `selectShortlist` ranks
+   * by this instead of recomputing the lexical-only score. Optional so the pure
+   * `relevanceScore` helper and its callers are unaffected.
+   */
+  relevanceScore?: number;
 }
 
 /**
@@ -112,6 +119,45 @@ export function relevanceScore(
   const langBonus = p.language === "id" || p.language === "en" ? LANGUAGE_BONUS : 0;
 
   return Math.round((0.6 * overlap + 0.25 * citationNorm + 0.15 * recency + langBonus) * 1000) / 1000;
+}
+
+/**
+ * Heuristic relevance of a paper to a TOPIC TITLE (distinct from the user's free
+ * text keywords): the fraction of the title's own significant tokens AND adjacent
+ * bigrams that appear in the paper's `title + abstract`.
+ *
+ * This is the "the module title IS a search query" mode of P2 — it runs
+ * independently of any user-supplied keywords, so a topic titled e.g.
+ * "Tingkatan aktor dan level hukum internasional" boosts papers that actually
+ * discuss the phrases "tingkatan aktor" / "hukum internasional" (the title's
+ * bigrams), even when the student typed NO keywords at all. Pure, deterministic,
+ * bounded in [0,1]. The bigram needles widen phrase-level recall the way
+ * `expandKeywords` does for the provider query, but here the signal feeds RANKING
+ * (not just upstream recall) so the title keeps shaping the shortlist after fetch.
+ */
+function heuristicTitleTokens(title: string): string[] {
+  return title
+    .toLowerCase()
+    .replace(/[^a-z0-9\s]/gi, " ")
+    .split(/\s+/)
+    .map((w) => w.trim())
+    .filter((w) => w.length >= 4);
+}
+
+export function titleHeuristicScore(
+  p: { title: string; abstract?: string },
+  title: string
+): number {
+  const toks = heuristicTitleTokens(title);
+  if (toks.length === 0) return 0;
+  const needles = new Set<string>();
+  for (const t of toks) needles.add(t);
+  for (let i = 0; i + 1 < toks.length; i++) needles.add(`${toks[i]} ${toks[i + 1]}`);
+  if (needles.size === 0) return 0;
+  const text = `${p.title} ${p.abstract ?? ""}`.toLowerCase();
+  let hits = 0;
+  for (const n of needles) if (text.includes(n)) hits++;
+  return Math.round((hits / needles.size) * 1000) / 1000;
 }
 
 // ---------------------------------------------------------------------------
@@ -309,10 +355,15 @@ export function selectShortlist<T extends ScoringPaper>(
   }
 
   const maxCitations = pool.reduce((m, p) => Math.max(m, p.citationCount), 0);
-  const scored = pool.map((p) => ({
-    p,
-    score: relevanceScore(p, terms, { maxCitations }),
-  }));
+  // When a caller has already stamped a (fused) `relevanceScore` on the papers
+  // — e.g. retrieveSources fusing keyword + heuristic + semantic signals — rank
+  // by THAT instead of recomputing the lexical-only score. Falls back to the
+  // lexical heuristic only when a paper carries no pre-set score (unit tests).
+  const scoreOf = (p: T): number =>
+    typeof p.relevanceScore === "number" && Number.isFinite(p.relevanceScore)
+      ? p.relevanceScore
+      : relevanceScore(p, terms, { maxCitations });
+  const scored = pool.map((p) => ({ p, score: scoreOf(p) }));
   scored.sort((a, b) => b.score - a.score);
 
   const cap = maxCount && maxCount >= minCount ? maxCount : undefined;
@@ -329,7 +380,7 @@ export function selectShortlist<T extends ScoringPaper>(
       .slice(0, minCount);
     const seen = new Set(byRecency.map((p) => p.title));
     for (const item of top) if (!seen.has(item.p.title)) byRecency.push(item.p);
-    top = byRecency.slice(0, k).map((p) => ({ p, score: relevanceScore(p, terms, { maxCitations }) }));
+    top = byRecency.slice(0, k).map((p) => ({ p, score: scoreOf(p) }));
   }
 
   const list = top.map((s) => s.p);
