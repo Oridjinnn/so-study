@@ -52,20 +52,21 @@
    drift from the UI. `muted`/`border` are AA-tuned on the light `background`
    (`--color-muted` is zinc-500 = 4.6:1 on white, replacing zinc-400's 2.8:1). */
 @theme {
-  /* Brand — primary buttons (`bg-brand-600` + `hover:bg-brand-700`), focus
-     rings and selected states (`ring-brand-500`). */
-  --color-brand-500: #6366f1;
-  --color-brand-600: #4f46e5;
-  --color-brand-700: #4338ca;
+  /* Brand — warm tones, primary buttons (`bg-brand-600` + `hover:bg-brand-700`),
+     focus rings and selected states (`ring-brand-500`). */
+  --color-brand-500: #c2784a;
+  --color-brand-600: #a85e35;
+  --color-brand-700: #8e4e2a;
 
   /* Semantic surfaces / de-emphasized text */
-  --color-muted: #71717a;
-  --color-border: #e4e4e7;
+  --color-muted: #9a9080;
+  --color-border: #e8e0d4;
   --color-card: #ffffff;
 
   /* Link ink. Separate from `brand-700` because that token doubles as the
-     button *hover* fill: a link needs to invert on dark, a fill must not. */
-  --color-link: #4338ca;
+     button *hover* fill under white text (`bg-brand-700` + `text-white` = 6.3:1),
+     while a link needs to invert on dark. */
+  --color-link: #a85e35;
 
   /* Radius + reading measure */
   --radius-card: 0.75rem;
@@ -74,21 +75,42 @@
 
 :root {
   color-scheme: light;
-  --background: #f7f7f8;
-  --foreground: #18181b;
+
+  /* Warm palette */
+  --warm-bg: #faf7f2;
+  --warm-fg: #1a1714;
+  --warm-card: #ffffff;
+  --warm-border: #e8e0d4;
+  --warm-muted: #9a9080;
+  --warm-brand: #c2784a;
+  --warm-brand-600: #a85e35;
+  --warm-brand-700: #8e4e2a;
+  --warm-accent: #5b8a72;
+  --warm-accent-600: #4a7360;
+  --warm-amber: #d4913a;
+  --warm-amber-bg: #fdf3e4;
+  --warm-red: #c45c4a;
+  --warm-red-bg: #fdf0ed;
+  --warm-emerald: #3d7a5e;
+  --warm-emerald-bg: #eaf5ee;
+
+  /* Background / foreground map to warm values so all existing
+     `bg-background` / `text-foreground` utilities automatically use the warm palette. */
+  --background: var(--warm-bg);
+  --foreground: var(--warm-fg);
 
   /* Dark palette, declared once. Both paths below (OS preference and the
      explicit `.dark` class) map these onto the live tokens, so the two can
      never disagree about what "dark" means. */
-  --dark-background: #0b0b0f;
-  --dark-foreground: #ededed;
-  --dark-card: #16161c;
-  --dark-border: #27272a;
-  --dark-muted: #a1a1aa;
-  --dark-brand-500: #818cf8;
-  --dark-brand-600: #6366f1;
-  --dark-brand-700: #4f46e5;
-  --dark-link: #a5b4fc;
+  --dark-background: #0f0e0c;
+  --dark-foreground: #eae6df;
+  --dark-card: #1a1816;
+  --dark-border: #332e28;
+  --dark-muted: #b0a590;
+  --dark-brand: #d4916a;
+  --dark-brand-600: #c2784a;
+  --dark-brand-700: #8e4e2a;
+  --dark-link: #e0b090;
 }
 
 @theme inline {
@@ -107,7 +129,7 @@
     --color-card: var(--dark-card);
     --color-border: var(--dark-border);
     --color-muted: var(--dark-muted);
-    --color-brand-500: var(--dark-brand-500);
+    --color-brand-500: var(--dark-brand);
     --color-brand-600: var(--dark-brand-600);
     --color-brand-700: var(--dark-brand-700);
     --color-link: var(--dark-link);
@@ -115,9 +137,8 @@
 }
 
 /* Explicit choice from the in-app toggle (localStorage key `theme`). Note the
-   dark `brand-700` stays a *darker* indigo: it is the hover fill under white
-   button text (`bg-brand-700` + `text-white` = 6.3:1), while `--color-link`
-   inverts to indigo-300 for readable link text on the dark surface (9:1). */
+   dark `brand-500` uses `--dark-brand` (warm peach) so links invert to a
+   readable warm tone on the dark surface (9:1). */
 :root.dark {
   color-scheme: dark;
   --background: var(--dark-background);
@@ -125,7 +146,7 @@
   --color-card: var(--dark-card);
   --color-border: var(--dark-border);
   --color-muted: var(--dark-muted);
-  --color-brand-500: var(--dark-brand-500);
+  --color-brand-500: var(--dark-brand);
   --color-brand-600: var(--dark-brand-600);
   --color-brand-700: var(--dark-brand-700);
   --color-link: var(--dark-link);
@@ -397,8 +418,8 @@ body {
 }
 
 /* T5 — brand-tinted skeleton shimmer. Uses theme tokens (--color-border /
-   --color-brand-500) so it adapts to dark mode automatically with no separate
-   `dark:` rule. Reduced-motion: the global `:225` guard freezes the animation. */
+    --color-brand-500) so it adapts to dark mode automatically with no separate
+    `dark:` rule. Reduced-motion: the global `:225` guard freezes the animation. */
 @keyframes skel-shimmer {
   from {
     background-position: 200% 0;
@@ -417,8 +438,157 @@ body {
   background-size: 200% 100%;
   animation: skel-shimmer 1.4s ease-in-out infinite;
 }
-@media (prefers-reduced-motion: reduce) {
-  .skeleton-shimmer {
-    animation: none;
+@keyframes fade-in-up {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
   }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+/* ─── Animation Utility Classes ─── */
+
+@media (prefers-reduced-motion: no-preference) {
+  .anim-fade-in-up {
+    animation: fadeInUp 400ms ease-out;
+  }
+  .anim-slide-in {
+    animation: slideInRight 300ms ease-out;
+  }
+  .anim-pulse-gentle {
+    animation: pulse-gentle 2s ease-in-out infinite;
+  }
+  .anim-toast-in {
+    animation: toast-in 300ms ease-out;
+  }
+  .anim-toast-out {
+    animation: toast-out 300ms ease-out;
+  }
+  .stagger-1 {
+    animation-delay: 0ms;
+  }
+  .stagger-2 {
+    animation-delay: 80ms;
+  }
+  .stagger-3 {
+    animation-delay: 160ms;
+  }
+  .stagger-4 {
+    animation-delay: 240ms;
+  }
+}
+
+/* ─── Empty State Styles ─── */
+
+.empty-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 2rem;
+  text-align: center;
+  background: color-mix(in srgb, var(--warm-brand) 0.05, transparent);
+  border: 1px solid var(--warm-border);
+  border-radius: var(--radius-card);
+  gap: 0.75rem;
+}
+.empty-state .empty-icon {
+  font-size: 3rem;
+  color: var(--warm-muted);
+}
+.empty-state .empty-title {
+  font-weight: 600;
+  color: var(--warm-fg);
+}
+.empty-state .empty-desc {
+  font-size: 0.875rem;
+  color: var(--warm-muted);
+}
+.empty-state .empty-actions {
+  display: flex;
+  gap: 0.5rem;
+  justify-content: center;
+}
+
+/* ─── Toast Styles ─── */
+
+.toast-container {
+  position: fixed;
+  bottom: 1rem;
+  right: 1rem;
+  z-index: 50;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  pointer-events: none;
+}
+.toast {
+  pointer-events: auto;
+  border-radius: var(--radius-card);
+  border: 1px solid var(--warm-border);
+  background: var(--warm-card);
+  box-shadow: 0 10px 15px -3px rgb(0 0 0 / 0.1), 0 4px 6px -4px rgb(0 0 0 / 0.1);
+  padding: 0.75rem 1rem;
+  font-size: 0.875rem;
+  max-width: 24rem;
+  animation: toast-in 300ms ease-out;
+  border-left: 3px solid var(--warm-brand);
+}
+.toast.toast-success {
+  border-left-color: var(--warm-emerald);
+}
+.toast.toast-error {
+  border-left-color: var(--warm-red);
+}
+.toast.toast-info {
+  border-left-color: var(--warm-brand);
+}
+.toast .toast-close {
+  color: var(--warm-muted);
+  cursor: pointer;
+  background: none;
+  border: none;
+  padding: 0;
+  line-height: 1;
+}
+.toast .toast-close:hover {
+  color: var(--warm-fg);
+}
+
+/* ─── Card Hover Lift ─── */
+
+.card-lift {
+  transition: box-shadow 200ms ease, transform 200ms ease;
+}
+@media (prefers-reduced-motion: no-preference) {
+  .card-lift:hover {
+    box-shadow: 0 10px 15px -3px rgb(0 0 0 / 0.1), 0 4px 6px -4px rgb(0 0 0 / 0.1);
+    transform: translateY(-0.125rem);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .card-lift {
+    transition: none;
+  }
+}
+
+/* ─── Progress Bar Enhancement ─── */
+
+.progress-bar {
+  height: 0.5rem;
+  border-radius: 9999px;
+  background: color-mix(in srgb, var(--warm-muted) 0.2, transparent);
+  overflow: hidden;
+}
+.progress-bar > .progress-fill {
+  height: 100%;
+  border-radius: 9999px;
+  background: var(--warm-brand);
+  transition: width 300ms ease;
+}
+.progress-bar.progress-complete > .progress-fill {
+  animation: pulse-gentle 1.5s ease-in-out infinite;
+  box-shadow: 0 0 0 4px color-mix(in srgb, var(--warm-brand) 0.2, transparent);
 }

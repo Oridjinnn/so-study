@@ -125,13 +125,16 @@ function CourseList({
             type="button"
             onClick={() => onSelectCourse(c.id)}
             aria-current={active ? "true" : undefined}
-            className={`tap block w-full rounded-card px-3 py-2.5 text-left transition ${
-              active
-                ? "bg-brand-500/10 ring-1 ring-brand-500"
-                : "hover:bg-zinc-100 dark:hover:bg-zinc-800/60"
-            }`}
+className={`tap block w-full rounded-card px-3 py-2.5 text-left transition anim-fade-in-up ${
+               active
+                 ? "bg-brand-500/10 ring-1 ring-brand-500"
+                 : "hover:bg-zinc-100 dark:hover:bg-zinc-800/60"
+             }`}
           >
             <div className="flex items-center gap-2">
+              {active && (
+                <span className="inline-block h-2 w-2 shrink-0 rounded-full bg-brand-500" />
+              )}
               <span className="truncate font-medium text-zinc-900 dark:text-zinc-100">{c.name}</span>
               {dueTodayByCourse && (dueTodayByCourse[c.id] ?? 0) > 0 && (
                 <span
@@ -140,8 +143,16 @@ function CourseList({
                 />
               )}
             </div>
-            <div className="mt-0.5 text-[11px] text-muted">
-              {c.modules.length}/{total} siap
+            <div className="mt-1 flex items-center gap-2">
+              <div className="h-1.5 flex-1 overflow-hidden rounded-full bg-zinc-200 dark:bg-zinc-700">
+                <div
+                  className="h-full rounded-full bg-brand-500/70"
+                  style={{ width: `${total > 0 ? Math.round((c.modules.length / total) * 100) : 0}%` }}
+                />
+              </div>
+              <span className="text-[11px] text-muted">
+                {c.modules.length}/{total}
+              </span>
             </div>
           </button>
         );
@@ -196,7 +207,7 @@ export default function Sidebar({
         onClick={() => setDrawerOpen(true)}
         aria-haspopup="dialog"
         aria-expanded={drawerOpen}
-        className="tap fixed top-[4.5rem] left-3 z-30 flex min-h-11 min-w-11 items-center justify-center rounded-card border border-border bg-card text-foreground shadow-lg md:hidden"
+        className="tap card-lift fixed top-[4.5rem] left-3 z-30 flex min-h-11 min-w-11 items-center justify-center rounded-card border border-border bg-card text-foreground shadow-lg md:hidden"
       >
         <Icon name="menu" />
         <span className="sr-only">Buka daftar mata kuliah</span>

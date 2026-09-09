@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect, useRef } from "react";
 import type { GaugeBand, VerificationPayload } from "../lib/types";
 import { apiFetch } from "../lib/api";
 import { bandLabel } from "@/src/lib/gauge";
@@ -78,6 +78,8 @@ export default function ReliabilityGauge({
 }: Props) {
   const [busy, setBusy] = useState<"tier1" | "tier2" | "repair" | null>(null);
   const [note, setNote] = useState<string | null>(null);
+  const [animatedScore, setAnimatedScore] = useState(0);
+  const animFrameRef = useRef<number | null>(null);
 
   const gauge = verification?.gauge ?? null;
   const tier1 = verification?.tier1 ?? null;
@@ -87,6 +89,30 @@ export default function ReliabilityGauge({
   const flagged = gauge?.flagCount ?? 0;
   const blocked = Boolean(tier1?.blocked);
   const criticFlags = (critic?.judgments ?? []).filter((j) => j.verdict !== "supported");
+
+  useEffect(() => {
+    const target = gauge ? Math.round(gauge.score * 100) : 0;
+    const duration = 800;
+    const start = performance.now();
+    const from = animatedScore;
+
+    if (animFrameRef.current) cancelAnimationFrame(animFrameRef.current);
+
+    function step(now: number) {
+      const elapsed = now - start;
+      const progress = Math.min(elapsed / duration, 1);
+      const eased = 1 - Math.pow(1 - progress, 3);
+      setAnimatedScore(Math.round(from + (target - from) * eased));
+      if (progress < 1) {
+        animFrameRef.current = requestAnimationFrame(step);
+      }
+    }
+
+    animFrameRef.current = requestAnimationFrame(step);
+    return () => {
+      if (animFrameRef.current) cancelAnimationFrame(animFrameRef.current);
+    };
+  }, [gauge?.score]);
 
   async function post(url: string, body: unknown, kind: "tier1" | "tier2" | "repair") {
     setBusy(kind);
@@ -117,22 +143,19 @@ export default function ReliabilityGauge({
 
   async function runRepair() {
     const data = await post(`/api/modules/${moduleId}/repair`, {}, "repair");
-    // The route returns the new content indirectly (verification + changed); the
-    // parent re-reads the module so the reader shows the repaired text.
     if (data?.changed) onContentChanged?.("");
   }
 
-  // --- Not verified yet (module predates the gate, or Tier 1 cache unreadable).
   if (!gauge || !tier1) {
     return (
       <section
         aria-labelledby="gauge-heading"
-        className="rounded-card border border-border bg-card p-4"
+        className="rounded-card border border-border bg-card p-4 anim-fade-in-up"
       >
         <h3 id="gauge-heading" className="mb-1 font-semibold">
           Keandalan modul
         </h3>
-        <p className="mb-3 text-sm text-muted">
+        <p className="mb-3 text-sm text-muted leading-relaxed">
           Modul ini <strong>belum diperiksa</strong>. Belum diperiksa bukan berarti bersih — tidak ada
           skor yang ditampilkan sampai pemeriksaan dijalankan.
         </p>
@@ -166,12 +189,12 @@ export default function ReliabilityGauge({
 
   const color = BAND_COLOR[gauge.band];
   const needle = polar(gauge.score);
-  const scorePct = Math.round(gauge.score * 100);
+  const scorePct = animatedScore;
 
   return (
     <section
       aria-labelledby="gauge-heading"
-      className="rounded-card border border-border bg-card p-4"
+      className="rounded-card border border-border bg-card p-4 anim-fade-in-up"
     >
       <h3 id="gauge-heading" className="mb-2 font-semibold">
         Keandalan modul (Tahap 1 + Tahap 2)
@@ -233,7 +256,7 @@ export default function ReliabilityGauge({
       </div>
 
       {/* Caveat: body text, never a tooltip. */}
-      <p className="mt-3 rounded-card bg-zinc-50 p-3 text-xs text-foreground dark:bg-zinc-800/40">
+      <p className="mt-3 rounded-card bg-zinc-50 p-3 text-xs text-foreground dark:bg-zinc-800/40 leading-relaxed">
         {gauge.caveat}
       </p>
 
@@ -260,8 +283,8 @@ export default function ReliabilityGauge({
           role="alert"
           className="mt-3 rounded-card border border-red-300 bg-red-50 p-3 text-sm text-red-800 dark:border-red-800 dark:bg-red-950/40 dark:text-red-300"
         >
-          <p className="font-semibold">Modul ditahan: ada sitasi yang tidak menunjuk paper mana pun.</p>
-          <p className="mt-1 text-xs">
+          <p className="font-semibold leading-relaxed">Modul ditahan: ada sitasi yang tidak menunjuk paper mana pun.</p>
+          <p className="mt-1 text-xs leading-relaxed">
             Pemeriksaan Tahap 1 bersifat deterministik — ini bukan penilaian, penanda [n] itu memang
             tidak punya paper yang disetujui di belakangnya. Isi modul tidak ditampilkan sampai
             diperbaiki.
@@ -276,7 +299,7 @@ export default function ReliabilityGauge({
               <h4 className="text-sm font-semibold">
                 Temuan Tahap 1 — deterministik ({tier1.findings.length})
               </h4>
-              <p className="text-xs text-muted">
+              <p className="text-xs text-muted leading-relaxed">
                 Hanya memeriksa keterhubungan struktural ke sumber, bukan ketepatan tafsir.
               </p>
               <ul className="mt-1 space-y-2">
@@ -307,7 +330,7 @@ export default function ReliabilityGauge({
               <h4 className="text-sm font-semibold">
                 Ditandai kritikus AI — Tahap 2 ({criticFlags.length})
               </h4>
-              <p className="text-xs text-muted">
+              <p className="text-xs text-muted leading-relaxed">
                 Opini kedua, bukan putusan: tanda ini tidak pernah menahan modul dan bisa salah juga.
                 Perlu dibaca manusia.
               </p>
@@ -339,19 +362,19 @@ export default function ReliabilityGauge({
         {!blocked &&
           (flagged === 0 ? (
           // Nothing to fix: no regeneration affordance at all (Part 4 rule 2).
-          <p className="text-sm text-green-700 dark:text-green-300">
+          <p className="text-sm text-green-700 dark:text-green-300 leading-relaxed">
             Modul ini sudah lolos Tahap 1{critic?.ran ? " dan Tahap 2" : ""} — tidak ada klaim yang
             ditandai, jadi tidak ada yang perlu diperbaiki.
             {!critic?.ran && " Tinjauan AI (Tahap 2) belum dijalankan."}
           </p>
         ) : attemptsLeft === 0 ? (
-          <p role="status" className="text-sm text-amber-700 dark:text-amber-300">
+          <p role="status" className="text-sm text-amber-700 dark:text-amber-300 leading-relaxed">
             Sudah {attemptsUsed} kali perbaikan terarah dan {flagged} temuan masih ada: belum bisa
             diperbaiki otomatis, tinjau manual.
           </p>
         ) : (
           <div className="space-y-2">
-            <p className="text-sm">
+            <p className="text-sm leading-relaxed">
               Ada {flagged} temuan. Perbaikan hanya menyasar klaim bertanda itu — dengan teks klaim,
               alasannya, dan teks sumber aslinya — bukan menulis ulang seluruh modul.
             </p>

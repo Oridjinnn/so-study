@@ -20,6 +20,7 @@ import ReliabilityGauge from "./ReliabilityGauge";
 import AskStep from "./AskStep";
 import PracticeStep from "./PracticeStep";
 import { CHIP_CLASS } from "./ui";
+import Icon from "./Icon";
 
 const TABS = [
   { id: "read", label: "Baca" },
@@ -245,9 +246,9 @@ export default function Workspace({
 
   return (
     <div className="mx-auto max-w-3xl px-4 py-6 sm:px-6">
-      <header className="mb-4">
+      <header className="mb-4 rounded-card border border-transparent bg-clip-padding bg-card p-[1px]" style={{ backgroundImage: 'linear-gradient(var(--background), var(--background)) padding-box, linear-gradient(135deg, var(--color-brand-500), var(--color-brand-700)) border-box' }}>
         <div className="flex items-start justify-between gap-3">
-          <h1 className="text-2xl font-bold">{detail.topicTitle}</h1>
+          <h1 className="text-3xl font-bold tracking-tight">{detail.topicTitle}</h1>
           <button
             type="button"
             onClick={() => setConfirmDelete(true)}
@@ -336,32 +337,36 @@ export default function Workspace({
                 href={`/api/modules/${detail.id}/export?format=md`}
                 download
                 title="Unduh modul + daftar sumber sebagai Markdown"
-                className={`${CHIP_CLASS} inline-flex items-center`}
+                className={`${CHIP_CLASS} inline-flex items-center gap-1.5 hover:bg-brand-500/10 hover:text-brand-700 dark:hover:text-brand-300`}
               >
+                <Icon name="download" className="size-3" />
                 Markdown
               </a>
               <a
                 href={`/api/modules/${detail.id}/export?format=anki`}
                 download
                 title="Unduh soal (bank soal Anda, atau soal cloze otomatis) untuk diimpor ke Anki"
-                className={`${CHIP_CLASS} inline-flex items-center`}
+                className={`${CHIP_CLASS} inline-flex items-center gap-1.5 hover:bg-brand-500/10 hover:text-brand-700 dark:hover:text-brand-300`}
               >
+                <Icon name="download" className="size-3" />
                 Anki
               </a>
               <a
                 href={`/api/modules/${detail.id}/export?format=pdf`}
                 download
                 title="Unduh modul + sumber sebagai PDF (dibuat di server)"
-                className={`${CHIP_CLASS} inline-flex items-center`}
+                className={`${CHIP_CLASS} inline-flex items-center gap-1.5 hover:bg-brand-500/10 hover:text-brand-700 dark:hover:text-brand-300`}
               >
+                <Icon name="download" className="size-3" />
                 PDF modul
               </a>
               <a
                 href={`/api/modules/${detail.id}/export?format=pdf-worksheet`}
                 download
                 title="Unduh lembar kerja: pertanyaan esai + rubrik (tanpa isi modul)"
-                className={`${CHIP_CLASS} inline-flex items-center`}
+                className={`${CHIP_CLASS} inline-flex items-center gap-1.5 hover:bg-brand-500/10 hover:text-brand-700 dark:hover:text-brand-300`}
               >
+                <Icon name="download" className="size-3" />
                 PDF lembar kerja
               </a>
             </>
@@ -370,20 +375,21 @@ export default function Workspace({
               {/* Same four export targets as the online branch, as explained
                   disabled chips — the labels must match one-for-one so the
                   worksheet PDF does not silently vanish offline. */}
-              {["Markdown", "Anki", "PDF modul", "PDF lembar kerja"].map((label) => (
+{["Markdown", "Anki", "PDF modul", "PDF lembar kerja"].map((label) => (
                 <span
                   key={label}
-                  className={`${CHIP_CLASS} inline-flex cursor-not-allowed items-center opacity-50`}
-                  title={
-                    blocked
-                      ? "Ekspor ditahan: ada sitasi hantu (Tahap 1 gagal). Perbaiki dulu di tab Sumber."
-                      : "Ekspor butuh internet. Sambungkan dulu."
-                  }
-                  aria-disabled="true"
-                >
-                  {label}
-                </span>
-              ))}
+                  className={`${CHIP_CLASS} inline-flex cursor-not-allowed items-center gap-1.5 opacity-50`}
+                   title={
+                     blocked
+                       ? "Ekspor ditahan: ada sitasi hantu (Tahap 1 gagal). Perbaiki dulu di tab Sumber."
+                       : "Ekspor butuh internet. Sambungkan dulu."
+                   }
+                   aria-disabled="true"
+                 >
+                   <Icon name="download" className="size-3" />
+                   {label}
+                 </span>
+               ))}
             </>
           )}
         </div>
@@ -407,11 +413,11 @@ export default function Workspace({
               role="tab"
               aria-selected={tab === t.id}
               aria-controls={`panel-${t.id}`}
-              className={`tap min-h-11 flex-1 rounded-card px-3 py-2 text-sm font-medium transition focus-visible:ring-2 focus-visible:ring-brand-500 focus-visible:outline-none ${
-                tab === t.id
-                  ? "bg-card text-link shadow-sm"
-                  : "text-muted hover:text-zinc-800 dark:hover:text-zinc-100"
-              }`}
+               className={`tap card-lift min-h-11 flex-1 rounded-card px-3 py-2 text-sm font-medium transition focus-visible:ring-2 focus-visible:ring-brand-500 focus-visible:outline-none ${
+                 tab === t.id
+                   ? "bg-card text-link shadow-sm"
+                   : "text-muted hover:text-zinc-800 dark:hover:text-zinc-100"
+               }`}
             >
               {t.label}
             </button>
@@ -433,7 +439,7 @@ export default function Workspace({
       )}
 
       {!online && (
-        <div className="mb-4 rounded-card border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-800 dark:border-amber-800 dark:bg-amber-950/40 dark:text-amber-300">
+        <div className="mb-4 rounded-card border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-800 dark:border-amber-800 dark:bg-amber-950/40 dark:text-amber-300 leading-relaxed">
           Mode offline — membaca tetap bisa, tapi Tanya, Latihan, dan ekspor (Markdown / Anki / PDF)
           butuh internet.
         </div>
@@ -444,7 +450,7 @@ export default function Workspace({
           // HARD GATE (Tier 1): a phantom citation is unambiguously wrong, so the
           // module body is withheld rather than flagged. The panel shows exactly
           // which sentences are at fault and offers the targeted fix.
-          <div id="panel-read" role="tabpanel" aria-labelledby="tab-read" className="space-y-3">
+          <div id="panel-read" role="tabpanel" aria-labelledby="tab-read" className="space-y-3 anim-slide-in">
             <div
               role="alert"
               className="rounded-card border border-red-300 bg-red-50 px-3 py-2 text-sm text-red-800 dark:border-red-800 dark:bg-red-950/40 dark:text-red-300"
@@ -482,7 +488,7 @@ export default function Workspace({
             id="panel-ask"
             role="tabpanel"
             aria-labelledby="tab-ask"
-            className="space-y-3"
+            className="space-y-3 anim-slide-in"
           >
             <div
               role="alert"
@@ -510,7 +516,7 @@ export default function Workspace({
             id="panel-test"
             role="tabpanel"
             aria-labelledby="tab-test"
-            className="space-y-3"
+            className="space-y-3 anim-slide-in"
           >
             <div
               role="alert"
@@ -539,7 +545,7 @@ export default function Workspace({
         ))}
 
       {tab === "sources" && (
-        <section id="panel-sources" role="tabpanel" aria-labelledby="tab-sources" className="space-y-6">
+        <section id="panel-sources" role="tabpanel" aria-labelledby="tab-sources" className="space-y-6 anim-slide-in">
           {/* Grounding lives with the sources: the gauge is a statement about how
               well the module is wired to the papers listed right below it. */}
           <ReliabilityGauge
@@ -553,7 +559,7 @@ export default function Workspace({
           <div>
             <h3 className="mb-2 font-semibold">Paper sumber</h3>
             {detail.sourcePapers.length === 0 ? (
-              <p className="text-sm text-muted">Modul ini belum mencatat paper sumber.</p>
+              <p className="text-sm text-muted leading-relaxed">Modul ini belum mencatat paper sumber.</p>
             ) : (
               <ul className="space-y-2">
                 {detail.sourcePapers.map((p, idx) => {
@@ -616,7 +622,7 @@ export default function Workspace({
           className="max-w-sm"
         >
           <div className="space-y-3 px-4 py-4 text-sm">
-            <p className="text-muted">
+            <p className="text-muted leading-relaxed">
               Topik, paper, dan seluruh riwayat latihannya ikut terhapus. Tindakan ini tidak bisa
               dibatalkan.
             </p>

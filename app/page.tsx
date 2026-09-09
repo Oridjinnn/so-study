@@ -26,6 +26,8 @@ import { PaperListSkeleton, SynthesisSkeleton } from "./components/Skeletons";
 import LoadingPanel from "./components/LoadingPanel";
 import ErrorBoundary from "./components/ErrorBoundary";
 import Modal from "./components/Modal";
+import EmptyState from "./components/EmptyState";
+import { ToastContainer, ToastProvider, useToast } from "./components/Toast";
 import { apiFetch } from "./lib/api";
 import { withViewTransition } from "./lib/viewTransition";
 
@@ -133,6 +135,7 @@ export default function Home() {
   const [topicToDelete, setTopicToDelete] = useState<TopicRef | null>(null);
   const [rpsOpen, setRpsOpen] = useState(false);
   const [batchOpen, setBatchOpen] = useState(false);
+  const { addToast } = useToast();
 
   const refreshCourses = useCallback(async () => {
     try {
@@ -202,10 +205,11 @@ export default function Home() {
       // (app/lib/viewTransition.ts) and is a plain swap everywhere else.
       withViewTransition(() => {
         setDetail(d);
-        setStatus("Modul terbuka.");
+        addToast("Modul terbuka", "success");
       });
     } catch (e) {
       setError((e as Error).message);
+      addToast((e as Error).message, "error");
       setStatus("");
     } finally {
       setBusy(false);
@@ -489,10 +493,11 @@ export default function Home() {
         const res = await apiFetch(`/api/topics/${t.id}`, { method: "DELETE" });
         const data = await res.json().catch(() => ({}));
         if (!res.ok) throw new Error(data.error ?? `HTTP ${res.status}`);
-        setStatus(`Topik "${t.title}" dihapus.`);
+        addToast("Topik dihapus", "success");
         await refreshCourses();
       } catch (e) {
         setError((e as Error).message);
+        addToast((e as Error).message, "error");
         setStatus("");
       } finally {
         setBusy(false);
@@ -566,11 +571,12 @@ export default function Home() {
   const dueTodayByCourse = progress?.dueTodayByCourse ?? localDueTodayByCourse;
 
   return (
-    <div className="flex min-h-[100dvh] flex-col">
-      <InstallGuide />
-      {coursesLoaded && courses.length === 0 && !onboardingDone && (
-        <SosoOnboarding onFinished={handleOnboarded} />
-      )}
+    <ToastProvider>
+      <div className="flex min-h-[100dvh] flex-col">
+        <InstallGuide />
+        {coursesLoaded && courses.length === 0 && !onboardingDone && (
+          <SosoOnboarding onFinished={handleOnboarded} />
+        )}
       <header
         className="sticky z-40 flex items-center gap-3 border-b border-border bg-white/80 px-4 py-3 backdrop-blur print:hidden dark:bg-zinc-900/70 sm:px-6"
         style={{ top: "env(safe-area-inset-top)" }}
@@ -688,38 +694,37 @@ export default function Home() {
                     {overdueCount > 0 ? ` · ${overdueCount} ulangan terlambat` : ""}
                   </p>
                 )}
-                <div className="mb-4 h-2 w-full overflow-hidden rounded-full bg-zinc-200 dark:bg-zinc-800">
+                <div className="mb-4 progress-bar">
                   <div
-                    className="h-full rounded-full bg-emerald-500 transition-all"
+                    className="progress-fill h-full rounded-full bg-emerald-500 transition-[width] duration-300"
                     style={{ width: `${pct}%` }}
+                    role="progressbar"
+                    aria-label="Progres belajar"
+                    aria-valuemin={0}
+                    aria-valuemax={100}
+                    aria-valuenow={pct}
                   />
                 </div>
 
                 {totalItems === 0 && (
-                  <div className="rounded-card border border-dashed border-border p-8 text-center">
-                    <p className="text-muted">Belum ada topik di mata kuliah ini.</p>
-                    <p className="mt-1 px-6 text-xs text-muted">
-                      Buat topik untuk menyusun modul dari paper akademik, lalu baca &amp; latih
-                      sebelum kuliah.
-                    </p>
-                    <button
-                      type="button"
-                      onClick={() => setComposerOpen(true)}
-                      className={`mt-3 ${PRIMARY_CLASS}`}
-                    >
-                      Buat topik pertama
-                    </button>
-                  </div>
+                  <EmptyState
+                    icon={
+                      <svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg>
+                    }
+                    title="Belum ada topik"
+                    description="Tambah topik untuk menyusun modul dari paper akademik."
+                    action={{ label: "Buat topik pertama", onClick: () => setComposerOpen(true) }}
+                  />
                 )}
 
                 <ul className="space-y-2">
-                  {activeCourse.modules.map((m) => (
-                    <li key={m.id}>
-                      <button
-                        type="button"
-                        onClick={() => openModule(m.id)}
-                        className="tap flex min-h-11 w-full items-center justify-between gap-3 rounded-card border border-border bg-card px-4 py-3 text-left transition hover:border-brand-500 focus-visible:ring-2 focus-visible:ring-brand-500 focus-visible:outline-none"
-                      >
+{activeCourse.modules.map((m, i) => (
+                    <li key={m.id} className={`anim-fade-in-up stagger-${(i % 4) + 1}`}>
+                       <button
+                         type="button"
+                         onClick={() => openModule(m.id)}
+                         className="tap card-lift flex min-h-11 w-full items-center justify-between gap-3 rounded-card border border-border bg-card px-4 py-3 text-left transition hover:border-brand-500 focus-visible:ring-2 focus-visible:ring-brand-500 focus-visible:outline-none"
+                       >
                         <div className="min-w-0">
                           <p className="truncate font-medium">{m.title}</p>
                           <p className="text-xs text-emerald-700 dark:text-emerald-400">
@@ -735,10 +740,10 @@ export default function Home() {
                       </button>
                     </li>
                   ))}
-                  {activeCourse.topics.map((t) => (
+{activeCourse.topics.map((t, i) => (
                     <li
                       key={t.id}
-                      className="flex items-stretch gap-2 rounded-card border border-border bg-card"
+                      className={`flex items-stretch gap-2 rounded-card border border-border bg-card anim-fade-in-up stagger-${(i % 4) + 1}`}
                     >
                       <button
                         type="button"
@@ -779,29 +784,14 @@ export default function Home() {
                 </p>
               </div>
             ) : (
-              <div className="flex flex-col items-center justify-center gap-3 p-8 text-center">
-                <p className="text-muted">Belum ada mata kuliah.</p>
-                <p className="max-w-xs text-xs text-muted">
-                  Buat mata kuliah lalu tambahkan topik: susun modul dari paper, baca, lalu latih
-                  (retrieval practice) sebelum kuliah dimulai.
-                </p>
-                <div className="flex flex-col gap-2 sm:flex-row">
-                  <button
-                    type="button"
-                    onClick={() => setComposerOpen(true)}
-                    className={PRIMARY_CLASS}
-                  >
-                    Buat topik
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setBatchOpen(true)}
-                    className={SECONDARY_CLASS}
-                  >
-                    Impor semester
-                  </button>
-                </div>
-              </div>
+              <EmptyState
+                icon={
+                  <svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg>
+                }
+                title="Belum ada mata kuliah"
+                description="Buat mata kuliah lalu tambah topik: susun modul dari paper, baca, lalu latih sebelum kuliah dimulai."
+                action={{ label: "Buat mata kuliah", onClick: () => setComposerOpen(true) }}
+              />
             )}
           </main>
         </ErrorBoundary>
@@ -898,6 +888,8 @@ export default function Home() {
           </Modal>
         )}
       </ErrorBoundary>
+      <ToastContainer />
     </div>
+    </ToastProvider>
   );
 }
