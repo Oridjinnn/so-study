@@ -189,7 +189,10 @@ export interface DueAttempt {
 export function isDue(attempt: DueAttempt): boolean {
   if (attempt.scheduledNextAt == null) return true;
   const next = new Date(attempt.scheduledNextAt);
-  if (Number.isNaN(next.getTime())) return true;
+  if (Number.isNaN(next.getTime())) {
+    console.warn("[scheduler] isDue called with unparseable scheduledNextAt", attempt.scheduledNextAt);
+    return false;
+  }
   return next.getTime() <= Date.now();
 }
 

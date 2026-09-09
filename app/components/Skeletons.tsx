@@ -1,12 +1,18 @@
-export function MCQSkeleton() {
+export function MCQSkeleton({ count = 3 }: { count?: number }) {
   return (
     <div className="space-y-4" aria-hidden="true">
-      {[0, 1, 2].map((i) => (
-        <div key={i} className="rounded-xl border border-zinc-200 p-4 dark:border-zinc-700">
+      {Array.from({ length: count }, (_, i) => (
+        <div
+          key={i}
+          className="rounded-xl border border-zinc-200 p-4 dark:border-zinc-700"
+        >
           <div className="mb-3 h-4 w-3/4 skeleton-shimmer rounded" />
           <div className="space-y-2">
             {[0, 1, 2, 3].map((j) => (
-              <div key={j} className="h-4 w-full skeleton-shimmer rounded" />
+              <div
+                key={j}
+                className="h-4 w-full skeleton-shimmer rounded"
+              />
             ))}
           </div>
         </div>

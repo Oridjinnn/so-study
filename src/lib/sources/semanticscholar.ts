@@ -23,8 +23,11 @@ interface S2Item {
 
 const CACHE_DIR = path.join(process.cwd(), ".cache", "sources", "semanticscholar");
 
-function cacheKey(q: string): string {
-  const slug = q
+function cacheKey(q: string, opts: { yearMin?: number; perTopic?: number; major?: string }): string {
+  const parts = [q, String(opts.yearMin ?? 1970), String(opts.perTopic ?? 15), opts.major ?? ""]
+    .filter(Boolean)
+    .join("_");
+  const slug = parts
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, "_")
     .slice(0, 200);
@@ -51,10 +54,10 @@ async function writeCache(key: string, papers: SourcePaper[]): Promise<void> {
 
 export const semanticScholarProvider: SourceProvider = {
   name: "semanticscholar",
-  async search(query: string, keywords: string[], opts: RetrieveOptions): Promise<SourcePaper[]> {
+  async search(query: string, keywords: string[], opts: RetrieveOptions, signal?: AbortSignal): Promise<SourcePaper[]> {
     try {
       const q = [query, ...keywords, opts.major].filter(Boolean).join(" ");
-      const key = cacheKey(q);
+      const key = cacheKey(q, { yearMin: opts.yearMin, perTopic: opts.perTopic, major: opts.major });
 
       if (opts.cache !== false) {
         const cached = await readCache(key);
@@ -67,7 +70,7 @@ export const semanticScholarProvider: SourceProvider = {
         `&limit=${opts.perTopic ?? 15}` +
         `&fields=title,year,abstract,authors,citationCount,externalIds,venue,publicationTypes,openAccessPdf,source`;
 
-      const res = await fetch(url);
+      const res = await fetch(url, { signal });
       if (!res.ok) return [];
       const json = (await res.json()) as { data?: S2Item[] };
       const items = json.data ?? [];

@@ -260,9 +260,9 @@ export default function ReliabilityGauge({
         {gauge.caveat}
       </p>
 
-      <details className="mt-2 text-xs">
-        <summary className="cursor-pointer text-muted">Arti warna</summary>
-        <ul className="mt-1 space-y-1">
+      <div className="legend mt-2 text-xs max-[399px]:hidden">
+        <p className="mb-1 font-semibold text-muted">Arti warna</p>
+        <ul className="space-y-1">
           {BAND_LEGEND.map((l) => (
             <li key={l.band} className="flex items-start gap-2">
               <span
@@ -276,7 +276,7 @@ export default function ReliabilityGauge({
             </li>
           ))}
         </ul>
-      </details>
+      </div>
 
       {blocked && (
         <div

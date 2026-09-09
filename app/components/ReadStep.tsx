@@ -70,7 +70,7 @@ export default function ReadStep({
 }: Props) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const [scrollPct, setScrollPct] = useState(0);
-  const [showFull, setShowFull] = useState(false);
+  const showFull = useMemo(() => pretestDone, [pretestDone]);
 
   const onScroll = useCallback(() => {
     const el = scrollRef.current;
@@ -90,101 +90,94 @@ export default function ReadStep({
   const isPreview = !showFull && previewMarkdown.length < contentMarkdown.length;
 
   return (
-    <div id="panel-read" role="tabpanel" aria-labelledby="tab-read">
-      {pretestDone ? (
-        <div className="overflow-hidden rounded-card border border-border bg-card">
-          <div className="sticky top-0 z-10 flex flex-wrap items-center justify-between gap-2 border-b border-border bg-card/95 px-4 py-2 text-sm backdrop-blur print:hidden">
-            <div className="flex items-center gap-3">
-              <span
-                className={`rounded-full px-2 py-0.5 text-xs font-semibold ${
-                  meetsTarget
-                    ? "bg-green-500/15 text-green-700 dark:text-green-300"
-                    : "bg-amber-500/15 text-amber-700 dark:text-amber-300"
-                }`}
-                title={
-                  pageCount != null
-                    ? "Jumlah halaman hasil pengukuran nyata pasca-generasi"
-                    : "Perkiraan halaman berdasarkan panjang teks (≈3000 karakter/halaman)"
-                }
-              >
-                Halaman {currentPage} / {pages} ≈
-              </span>
-              <span className="text-muted">{sections} bagian</span>
-            </div>
-            <span
-              className={`text-xs font-medium ${
-                meetsTarget ? "text-green-700 dark:text-green-300" : "text-amber-700 dark:text-amber-300"
-              }`}
-            >
-              {meetsTarget ? "Target ≥ 10 halaman terpenuhi" : "Belum mencapai 10 halaman"}
-            </span>
-          </div>
-          <div
-            ref={scrollRef}
-            onScroll={onScroll}
-            className="reader-scroll max-h-[calc(100vh-15rem)] overflow-y-auto p-5 sm:p-7"
-          >
-            <article className="reader-prose leading-relaxed">
-              <TableOfContents markdown={shownMarkdown} />
-              <Markdown text={shownMarkdown} onCite={onCite} />
-
-              {isPreview && (
-                <div className="mt-6 rounded-card border border-border bg-card p-4 text-sm shadow-sm print:hidden">
-                  <p className="mb-3 text-foreground">
-                    Ini pratinjau modul. Baca versi lengkap (≈10 halaman) dalam format PDF yang
-                    lebih nyaman dibaca.
-                  </p>
-                  <div className="flex flex-wrap items-center gap-3">
-                    {moduleId && (
-                      <>
-                        <a
-                          href={`/api/modules/${moduleId}/export?format=pdf`}
-                          className="rounded-lg bg-brand-500 px-3 py-1.5 font-medium text-white transition-colors hover:bg-brand-600"
-                        >
-                          Unduh modul lengkap (PDF)
-                        </a>
-                        <a
-                          href={`/api/modules/${moduleId}/export?format=pdf-worksheet`}
-                          className="rounded-lg border border-brand-500 px-3 py-1.5 font-medium text-brand-700 transition-colors hover:bg-brand-500/10 dark:text-brand-300"
-                        >
-                          Unduh lembar kerja (PDF)
-                        </a>
-                      </>
-                    )}
-                    <button
-                      type="button"
-                      onClick={() => setShowFull(true)}
-                      className="rounded-lg px-3 py-1.5 font-medium text-brand-700 underline-offset-2 hover:underline dark:text-brand-300"
-                    >
-                      Lanjutkan baca di sini
-                    </button>
-                  </div>
-                </div>
-              )}
-            </article>
-          </div>
-
-          {pageCount != null && pageCount < TARGET_PAGES && (
-            <div className="border-t border-border bg-amber-50 px-4 py-2 text-xs text-amber-800 print:hidden dark:border-amber-900/50 dark:bg-amber-950/40 dark:text-amber-300">
-              Modul ini agak lebih ringkas dari target 10 halaman.
-            </div>
-          )}
-
-          <div className="h-1.5 w-full bg-zinc-100 dark:bg-zinc-800/60 print:hidden">
-            <div
-              className="h-full bg-brand-500 transition-[width] duration-150"
-              style={{ width: `${Math.round(scrollPct * 100)}%` }}
-              role="progressbar"
-              aria-label="Progres membaca"
-              aria-valuemin={0}
-              aria-valuemax={100}
-              aria-valuenow={Math.round(scrollPct * 100)}
-            />
-          </div>
-        </div>
-      ) : (
+    <div id="panel-read" role="tabpanel" aria-labelledby="tab-read" className="space-y-4">
+      {!pretestDone && (
         <PretestGate topicId={topicId} onDone={onPretestDone} />
       )}
+
+      <div className="overflow-hidden rounded-card border border-border bg-card">
+        <div className="sticky top-0 z-10 flex flex-wrap items-center justify-between gap-2 border-b border-border bg-card/95 px-4 py-2 text-sm backdrop-blur print:hidden">
+          <div className="flex items-center gap-3">
+            <span
+              className={`rounded-full px-2 py-0.5 text-xs font-semibold ${
+                meetsTarget
+                  ? "bg-green-500/15 text-green-700 dark:text-green-300"
+                  : "bg-amber-500/15 text-amber-700 dark:text-amber-300"
+              }`}
+              title={
+                pageCount != null
+                  ? "Jumlah halaman hasil pengukuran nyata pasca-generasi"
+                  : "Perkiraan halaman berdasarkan panjang teks (≈3000 karakter/halaman)"
+              }
+            >
+              Halaman {currentPage} / {pages} ≈
+            </span>
+            <span className="text-muted">{sections} bagian</span>
+          </div>
+          <span
+            className={`text-xs font-medium ${
+              meetsTarget ? "text-green-700 dark:text-green-300" : "text-amber-700 dark:text-amber-300"
+            }`}
+          >
+            {meetsTarget ? "Target ≥ 10 halaman terpenuhi" : "Belum mencapai 10 halaman"}
+          </span>
+        </div>
+        <div
+          ref={scrollRef}
+          onScroll={onScroll}
+          className="reader-scroll overflow-y-auto p-5 sm:p-7"
+        >
+          <article className="reader-prose leading-relaxed">
+            <TableOfContents markdown={shownMarkdown} />
+            <Markdown text={shownMarkdown} onCite={onCite} />
+
+            {isPreview && (
+              <div className="mt-6 rounded-card border border-border bg-card p-4 text-sm shadow-sm print:hidden">
+                <p className="mb-3 text-foreground">
+                  Ini pratinjau modul. Baca versi lengkap (≈10 halaman) dalam format PDF yang
+                  lebih nyaman dibaca.
+                </p>
+                <div className="flex flex-wrap items-center gap-3">
+                  {moduleId && (
+                    <>
+                      <a
+                        href={`/api/modules/${moduleId}/export?format=pdf`}
+                        className="rounded-lg bg-brand-500 px-3 py-1.5 font-medium text-white transition-colors hover:bg-brand-600"
+                      >
+                        Unduh modul lengkap (PDF)
+                      </a>
+                      <a
+                        href={`/api/modules/${moduleId}/export?format=pdf-worksheet`}
+                        className="rounded-lg border border-brand-500 px-3 py-1.5 font-medium text-brand-700 transition-colors hover:bg-brand-500/10 dark:text-brand-300"
+                      >
+                        Unduh lembar kerja (PDF)
+                      </a>
+                    </>
+                  )}
+                </div>
+              </div>
+            )}
+          </article>
+        </div>
+
+        {pageCount != null && pageCount < TARGET_PAGES && (
+          <div className="border-t border-border bg-amber-50 px-4 py-2 text-xs text-amber-800 print:hidden dark:border-amber-900/50 dark:bg-amber-950/40 dark:text-amber-300">
+            Modul ini agak lebih ringkas dari target 10 halaman.
+          </div>
+        )}
+
+        <div className="h-1.5 w-full bg-zinc-100 dark:bg-zinc-800/60 print:hidden">
+          <div
+            className="h-full bg-brand-500 transition-[width] duration-150"
+            style={{ width: `${Math.round(scrollPct * 100)}%` }}
+            role="progressbar"
+            aria-label="Progres membaca"
+            aria-valuemin={0}
+            aria-valuemax={100}
+            aria-valuenow={Math.round(scrollPct * 100)}
+          />
+        </div>
+      </div>
     </div>
   );
 }

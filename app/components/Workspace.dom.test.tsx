@@ -93,7 +93,7 @@ function detailFixture(overrides: Partial<ModuleDetail> = {}): ModuleDetail {
 }
 
 function tabList() {
-  return ["Baca", "Tanya", "Latihan", "Sumber"].filter((label) =>
+  return ["1 Baca", "2 Tanya", "3 Latihan", "4 Sumber"].filter((label) =>
     screen.queryByRole("tab", { name: label }),
   );
 }
@@ -135,7 +135,7 @@ describe("Workspace header", () => {
 describe("Workspace reading tab", () => {
   it("opens on the module reader with the module content and its TOC", () => {
     render(<Workspace detail={detailFixture()} online={false} />);
-    expect(screen.getByRole("tab", { name: "Baca" })).toHaveAttribute("aria-selected", "true");
+    expect(screen.getByRole("tab", { name: "1 Baca" })).toHaveAttribute("aria-selected", "true");
     expect(screen.getByRole("navigation", { name: "Daftar isi" })).toBeInTheDocument();
     expect(screen.getByText(/Habitus adalah/)).toBeInTheDocument();
   });
@@ -145,7 +145,7 @@ describe("Workspace reading tab", () => {
 
     await userEvent.click(screen.getByRole("button", { name: "1" }));
 
-    expect(screen.getByRole("tab", { name: "Sumber" })).toHaveAttribute("aria-selected", "true");
+    expect(screen.getByRole("tab", { name: "4 Sumber" })).toHaveAttribute("aria-selected", "true");
     expect(screen.getByText("Sumber 1")).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "Outline of a Theory of Practice" })).toHaveAttribute(
       "href",
@@ -156,44 +156,44 @@ describe("Workspace reading tab", () => {
   it("marks tabs with role=tab and aria-selected for VoiceOver", async () => {
     render(<Workspace detail={detailFixture()} online={false} />);
 
-    await userEvent.click(screen.getByRole("tab", { name: "Sumber" }));
+    await userEvent.click(screen.getByRole("tab", { name: "4 Sumber" }));
 
-    expect(screen.getByRole("tab", { name: "Sumber" })).toHaveAttribute("aria-selected", "true");
-    expect(screen.getByRole("tab", { name: "Baca" })).toHaveAttribute("aria-selected", "false");
+    expect(screen.getByRole("tab", { name: "4 Sumber" })).toHaveAttribute("aria-selected", "true");
+    expect(screen.getByRole("tab", { name: "1 Baca" })).toHaveAttribute("aria-selected", "false");
   });
 });
 
 describe("Workspace closed-book mode (R8)", () => {
   it("shows all four tabs while open-book", () => {
     render(<Workspace detail={detailFixture()} online={false} />);
-    expect(tabList()).toEqual(["Baca", "Tanya", "Latihan", "Sumber"]);
+    expect(tabList()).toEqual(["1 Baca", "2 Tanya", "3 Latihan", "4 Sumber"]);
   });
 
   it("locks Baca, Tanya and Sumber once closed-book is enabled", async () => {
     render(<Workspace detail={detailFixture()} online={false} />);
 
-    await userEvent.click(screen.getByRole("tab", { name: "Latihan" }));
+    await userEvent.click(screen.getByRole("tab", { name: "3 Latihan" }));
     await userEvent.click(screen.getByRole("checkbox"));
 
-    expect(tabList()).toEqual(["Latihan"]);
-    expect(screen.queryByRole("tab", { name: "Baca" })).not.toBeInTheDocument();
-    expect(screen.queryByRole("tab", { name: "Sumber" })).not.toBeInTheDocument();
+    expect(tabList()).toEqual(["3 Latihan"]);
+    expect(screen.queryByRole("tab", { name: "1 Baca" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("tab", { name: "4 Sumber" })).not.toBeInTheDocument();
   });
 
   it("restores the reference tabs when closed-book is switched off", async () => {
     render(<Workspace detail={detailFixture()} online={false} />);
 
-    await userEvent.click(screen.getByRole("tab", { name: "Latihan" }));
+    await userEvent.click(screen.getByRole("tab", { name: "3 Latihan" }));
     const toggle = screen.getByRole("checkbox");
     await userEvent.click(toggle);
     await userEvent.click(toggle);
 
-    expect(tabList()).toEqual(["Baca", "Tanya", "Latihan", "Sumber"]);
+    expect(tabList()).toEqual(["1 Baca", "2 Tanya", "3 Latihan", "4 Sumber"]);
   });
 
   it("explains why the tabs are locked (retrieval practice)", async () => {
     render(<Workspace detail={detailFixture()} online={false} />);
-    await userEvent.click(screen.getByRole("tab", { name: "Latihan" }));
+    await userEvent.click(screen.getByRole("tab", { name: "3 Latihan" }));
     expect(screen.getByText(/Mode tertutup/)).toBeInTheDocument();
     expect(screen.getByText(/Retrieval practice dari memori/)).toBeInTheDocument();
   });
@@ -208,7 +208,7 @@ describe("Workspace offline behaviour (R5)", () => {
   it("refuses to answer offline instead of fabricating an answer", async () => {
     render(<Workspace detail={detailFixture()} online={false} />);
 
-    await userEvent.click(screen.getByRole("tab", { name: "Tanya" }));
+    await userEvent.click(screen.getByRole("tab", { name: "2 Tanya" }));
     await userEvent.type(screen.getByPlaceholderText(/Tanya sesuatu/), "Apa itu habitus?");
     await userEvent.click(screen.getByRole("button", { name: "Tanya" }));
 
@@ -219,7 +219,7 @@ describe("Workspace offline behaviour (R5)", () => {
   it("asks for a question before calling the API at all", async () => {
     render(<Workspace detail={detailFixture()} online={false} />);
 
-    await userEvent.click(screen.getByRole("tab", { name: "Tanya" }));
+    await userEvent.click(screen.getByRole("tab", { name: "2 Tanya" }));
     await userEvent.click(screen.getByRole("button", { name: "Tanya" }));
 
     expect(screen.getByText("Tulis pertanyaan dulu.")).toBeInTheDocument();
@@ -236,7 +236,7 @@ describe("Workspace scoped Q&A", () => {
   it("sends the module chunks and topic with the question, then renders the answer", async () => {
     render(<Workspace detail={detailFixture()} online />);
 
-    await userEvent.click(screen.getByRole("tab", { name: "Tanya" }));
+    await userEvent.click(screen.getByRole("tab", { name: "2 Tanya" }));
     await userEvent.type(screen.getByPlaceholderText(/Tanya sesuatu/), "Apa itu habitus?");
     await userEvent.click(screen.getByRole("button", { name: "Tanya" }));
 
@@ -253,15 +253,15 @@ describe("Workspace scoped Q&A", () => {
 });
 
 async function openMCQ() {
-  await userEvent.click(screen.getByRole("tab", { name: "Latihan" }));
+  await userEvent.click(screen.getByRole("tab", { name: "3 Latihan" }));
   await userEvent.click(screen.getByRole("button", { name: "Buat soal" }));
-  await screen.findByText("Apa itu habitus?");
+  await screen.findByText(/Apa itu habitus?/);
 }
 
 describe("Workspace practice (P0-3, on-demand MCQ)", () => {
   it("never fires an MCQ generation on mount — only the button does", async () => {
     render(<Workspace detail={detailFixture()} online />);
-    await userEvent.click(screen.getByRole("tab", { name: "Latihan" }));
+    await userEvent.click(screen.getByRole("tab", { name: "3 Latihan" }));
 
     expect(calls.some((c) => c.url.startsWith("/api/mcq"))).toBe(false);
     expect(screen.getByText(/Tekan/)).toBeInTheDocument();
@@ -272,7 +272,7 @@ describe("Workspace practice (P0-3, on-demand MCQ)", () => {
       const mcq = calls.find((c) => c.url.startsWith("/api/mcq"));
       expect(mcq?.body).toMatchObject({ text: detailFixture().contentMarkdown, count: 5 });
     });
-    expect(await screen.findByText("Apa itu habitus?")).toBeInTheDocument();
+    expect(await screen.findByText(/Apa itu habitus?/)).toBeInTheDocument();
   });
 
   it("persists generated MCQs into the question bank as AI-authored", async () => {
@@ -292,7 +292,7 @@ describe("Workspace practice (P0-3, on-demand MCQ)", () => {
 
   it("does not spend an API call on MCQs while offline", async () => {
     render(<Workspace detail={detailFixture()} online={false} />);
-    await userEvent.click(screen.getByRole("tab", { name: "Latihan" }));
+    await userEvent.click(screen.getByRole("tab", { name: "3 Latihan" }));
     await userEvent.click(screen.getByRole("button", { name: "Buat soal" }));
 
     expect(screen.getByText("Membuat soal butuh internet. Sambungkan dulu.")).toBeInTheDocument();
@@ -303,12 +303,11 @@ describe("Workspace practice (P0-3, on-demand MCQ)", () => {
     render(<Workspace detail={detailFixture()} online />);
     await openMCQ();
 
-    // MCQ is graded automatically the moment a choice is committed — there is no
-    // explicit "Nilai" button (the key checks the pick, options lock, the score
-    // shows, and the attempt is recorded once).
+    // MCQ is graded when the student checks the answer, not when they pick.
     await userEvent.click(await screen.findByRole("radio", { name: /Disposisi terinternalisasi/ }));
+    await userEvent.click(screen.getByRole("button", { name: "Periksa jawaban" }));
 
-    expect(screen.getAllByText("Skor akhir: 1/1").length).toBeGreaterThan(0);
+    expect(screen.getAllByText(/Skor akhir: 1\/1/).length).toBeGreaterThan(0);
     await waitFor(() => {
       const attempt = calls.find((c) => c.url === "/api/attempts");
       expect(attempt?.body).toMatchObject({ moduleId: "mod-1", topicId: "topic-1" });
@@ -323,9 +322,10 @@ describe("Workspace practice (P0-3, on-demand MCQ)", () => {
     await openMCQ();
 
     await userEvent.click(await screen.findByRole("radio", { name: /Disposisi terinternalisasi/ }));
+    await userEvent.click(screen.getByRole("button", { name: "Periksa jawaban" }));
 
-    expect(screen.getByText(/dinilai otomatis dengan kunci soal/)).toBeInTheDocument();
-    expect(screen.queryByText(/dievaluasi dari rubrik modul/)).not.toBeInTheDocument();
+    expect(screen.getByText("benar")).toBeInTheDocument();
+    expect(screen.getByText(/Opsi terkunci setelah dijawab/)).toBeInTheDocument();
   });
 
   it("marks a wrong pick incorrect and reveals the explanation", async () => {
@@ -333,8 +333,9 @@ describe("Workspace practice (P0-3, on-demand MCQ)", () => {
     await openMCQ();
 
     await userEvent.click(await screen.findByRole("radio", { name: /Aturan tertulis/ }));
+    await userEvent.click(screen.getByRole("button", { name: "Periksa jawaban" }));
 
-    expect(screen.getAllByText("Skor akhir: 0/1").length).toBeGreaterThan(0);
+    expect(screen.getAllByText(/Skor akhir: 0\/1/).length).toBeGreaterThan(0);
     expect(screen.getByText("Bourdieu: struktur terstruktur.")).toBeInTheDocument();
   });
 });
@@ -342,7 +343,7 @@ describe("Workspace practice (P0-3, on-demand MCQ)", () => {
 describe("Workspace Latihan core loop", () => {
   it("shows the four core steps at once (no nested sub-tabs)", async () => {
     render(<Workspace detail={detailFixture()} online={false} />);
-    await userEvent.click(screen.getByRole("tab", { name: "Latihan" }));
+    await userEvent.click(screen.getByRole("tab", { name: "3 Latihan" }));
 
     expect(screen.getByRole("heading", { name: "1. Pilihan ganda" })).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "2. Esai" })).toBeInTheDocument();
@@ -355,7 +356,7 @@ describe("Workspace Latihan core loop", () => {
 
   it("merges calibration and metacognition under Evaluasi diri", async () => {
     render(<Workspace detail={detailFixture()} online={false} />);
-    await userEvent.click(screen.getByRole("tab", { name: "Latihan" }));
+    await userEvent.click(screen.getByRole("tab", { name: "3 Latihan" }));
 
     expect(
       screen.getByRole("heading", { name: /Kalibrasi: perkiraan vs kenyataan/ }),
@@ -365,7 +366,7 @@ describe("Workspace Latihan core loop", () => {
 
   it("keeps Bank Soal inside the Pilihan Ganda step", async () => {
     render(<Workspace detail={detailFixture()} online={false} />);
-    await userEvent.click(screen.getByRole("tab", { name: "Latihan" }));
+    await userEvent.click(screen.getByRole("tab", { name: "3 Latihan" }));
 
     expect(screen.getByTestId("question-bank")).toBeInTheDocument();
   });
@@ -374,7 +375,7 @@ describe("Workspace Latihan core loop", () => {
 describe("Workspace advanced practice accordion", () => {
   it("keeps Latihan lanjutan collapsed by default and unmounts its content", async () => {
     render(<Workspace detail={detailFixture()} online={false} courseId="course-1" />);
-    await userEvent.click(screen.getByRole("tab", { name: "Latihan" }));
+    await userEvent.click(screen.getByRole("tab", { name: "3 Latihan" }));
 
     const toggle = screen.getByRole("button", { name: /Latihan lanjutan/ });
     expect(toggle).toHaveAttribute("aria-expanded", "false");
@@ -388,7 +389,7 @@ describe("Workspace advanced practice accordion", () => {
 
   it("reveals the optional features only after being expanded", async () => {
     render(<Workspace detail={detailFixture()} online={false} courseId="course-1" />);
-    await userEvent.click(screen.getByRole("tab", { name: "Latihan" }));
+    await userEvent.click(screen.getByRole("tab", { name: "3 Latihan" }));
 
     await userEvent.click(screen.getByRole("button", { name: /Latihan lanjutan/ }));
 
@@ -403,16 +404,15 @@ describe("Workspace advanced practice accordion", () => {
 });
 
 describe("Workspace learning-science gates", () => {
-  it("holds the reader behind prequestions until they are answered or skipped", async () => {
+  it("shows the pretest banner before reading and allows skipping", async () => {
     clearGates();
     render(<Workspace detail={detailFixture()} online={false} />);
 
     expect(
       await screen.findByRole("heading", { name: /Pra-tes singkat sebelum membaca/ }),
     ).toBeInTheDocument();
-    expect(screen.queryByRole("navigation", { name: "Daftar isi" })).not.toBeInTheDocument();
 
-    await userEvent.click(await screen.findByRole("button", { name: "Lanjut ke modul" }));
+    await userEvent.click(await screen.findByRole("button", { name: "Lewati pra-tes" }));
 
     expect(screen.getByRole("navigation", { name: "Daftar isi" })).toBeInTheDocument();
     expect(window.localStorage.getItem("pretest:topic-1")).not.toBeNull();
@@ -421,7 +421,7 @@ describe("Workspace learning-science gates", () => {
   it("asks for a free-recall brain dump before Q&A opens", async () => {
     clearGates();
     render(<Workspace detail={detailFixture()} online={false} />);
-    await userEvent.click(screen.getByRole("tab", { name: "Tanya" }));
+    await userEvent.click(screen.getByRole("tab", { name: "2 Tanya" }));
 
     expect(screen.getByRole("heading", { name: /Tulis dulu yang Anda ingat/ })).toBeInTheDocument();
     expect(screen.queryByPlaceholderText(/Tanya sesuatu/)).not.toBeInTheDocument();
@@ -441,7 +441,7 @@ describe("Workspace learning-science gates", () => {
 describe("Workspace essay (P0-4, R6)", () => {
   it("defaults to the module's generated prompt and rubric", async () => {
     render(<Workspace detail={detailFixture()} online={false} />);
-    await userEvent.click(screen.getByRole("tab", { name: "Latihan" }));
+    await userEvent.click(screen.getByRole("tab", { name: "3 Latihan" }));
 
     expect(screen.getByPlaceholderText("Pertanyaan esai")).toHaveValue(
       "Jelaskan habitus dengan kata sendiri.",
@@ -453,7 +453,7 @@ describe("Workspace essay (P0-4, R6)", () => {
 
   it("autosaves the draft answer so a disconnect cannot lose work", async () => {
     render(<Workspace detail={detailFixture()} online={false} />);
-    await userEvent.click(screen.getByRole("tab", { name: "Latihan" }));
+    await userEvent.click(screen.getByRole("tab", { name: "3 Latihan" }));
 
     await userEvent.type(screen.getByPlaceholderText(/Jawaban Anda/), "Habitus itu");
 
@@ -465,7 +465,7 @@ describe("Workspace essay (P0-4, R6)", () => {
   it("restores a saved draft on remount", async () => {
     window.localStorage.setItem("draft:topic-1", "draft lama");
     render(<Workspace detail={detailFixture()} online={false} />);
-    await userEvent.click(screen.getByRole("tab", { name: "Latihan" }));
+    await userEvent.click(screen.getByRole("tab", { name: "3 Latihan" }));
 
     await waitFor(() =>
       expect(screen.getByPlaceholderText(/Jawaban Anda/)).toHaveValue("draft lama"),
@@ -474,7 +474,7 @@ describe("Workspace essay (P0-4, R6)", () => {
 
   it("refuses to grade offline and never posts the essay", async () => {
     render(<Workspace detail={detailFixture()} online={false} />);
-    await userEvent.click(screen.getByRole("tab", { name: "Latihan" }));
+    await userEvent.click(screen.getByRole("tab", { name: "3 Latihan" }));
 
     await userEvent.type(screen.getByPlaceholderText(/Jawaban Anda/), "Habitus itu");
     await userEvent.click(screen.getByRole("button", { name: "Nilai esai" }));
@@ -485,7 +485,7 @@ describe("Workspace essay (P0-4, R6)", () => {
 
   it("grades an essay with the rubric and records the attempt", async () => {
     render(<Workspace detail={detailFixture()} online />);
-    await userEvent.click(screen.getByRole("tab", { name: "Latihan" }));
+    await userEvent.click(screen.getByRole("tab", { name: "3 Latihan" }));
 
     await userEvent.type(screen.getByPlaceholderText(/Jawaban Anda/), "Habitus itu disposisi.");
     await userEvent.click(screen.getByRole("button", { name: "Nilai esai" }));
@@ -513,7 +513,6 @@ describe("Workspace essay (P0-4, R6)", () => {
 describe("Workspace export (Phase 3)", () => {
   it("offers Markdown, Anki, module PDF and worksheet PDF downloads when online", () => {
     render(<Workspace detail={detailFixture()} online={true} />);
-    const panel = screen.getByLabelText("Ekspor modul");
 
     for (const [label, fmt] of [
       ["Markdown", "md"],
@@ -521,7 +520,7 @@ describe("Workspace export (Phase 3)", () => {
       ["PDF modul", "pdf"],
       ["PDF lembar kerja", "pdf-worksheet"],
     ] as const) {
-      const link = within(panel).getByRole("link", { name: label });
+      const link = screen.getByRole("link", { name: label });
       expect(link).toHaveAttribute("href", `/api/modules/mod-1/export?format=${fmt}`);
       expect(link).toHaveAttribute("download");
     }
@@ -529,14 +528,13 @@ describe("Workspace export (Phase 3)", () => {
 
   it("disables all exports when offline instead of hanging on a server round-trip", () => {
     render(<Workspace detail={detailFixture()} online={false} />);
-    const panel = screen.getByLabelText("Ekspor modul");
 
     // No export link is navigable offline…
-    expect(within(panel).queryByRole("link", { name: "PDF modul" })).toBeNull();
-    expect(within(panel).queryByRole("link", { name: "PDF lembar kerja" })).toBeNull();
+    expect(screen.queryByRole("link", { name: "PDF modul" })).toBeNull();
+    expect(screen.queryByRole("link", { name: "PDF lembar kerja" })).toBeNull();
     // …they are explained as disabled chips.
-    const pdf = within(panel).getByText("PDF modul", { exact: true });
-    expect(pdf).toHaveAttribute("aria-disabled", "true");
+    const pdf = screen.getByText("PDF modul", { exact: true });
+    expect(pdf.closest("span[aria-disabled='true']")).toBeTruthy();
     expect(pdf).toHaveAttribute("title", "Ekspor butuh internet. Sambungkan dulu.");
   });
 });
@@ -552,26 +550,26 @@ describe("Workspace tablist a11y", () => {
 
   it("moves selection and focus with ArrowRight", async () => {
     render(<Workspace detail={detailFixture()} online={false} />);
-    const read = screen.getByRole("tab", { name: "Baca" });
+    const read = screen.getByRole("tab", { name: "1 Baca" });
     read.focus();
     expect(read).toHaveFocus();
 
     await userEvent.type(read, "{ArrowRight}");
 
-    expect(screen.getByRole("tab", { name: "Tanya" })).toHaveAttribute("aria-selected", "true");
-    expect(screen.getByRole("tab", { name: "Tanya" })).toHaveFocus();
-    expect(screen.getByRole("tab", { name: "Baca" })).toHaveAttribute("aria-selected", "false");
+    expect(screen.getByRole("tab", { name: "2 Tanya" })).toHaveAttribute("aria-selected", "true");
+    expect(screen.getByRole("tab", { name: "2 Tanya" })).toHaveFocus();
+    expect(screen.getByRole("tab", { name: "1 Baca" })).toHaveAttribute("aria-selected", "false");
   });
 
   it("wraps ArrowRight from the last tab back to the first", async () => {
     render(<Workspace detail={detailFixture()} online={false} />);
-    const sources = screen.getByRole("tab", { name: "Sumber" });
+    const sources = screen.getByRole("tab", { name: "4 Sumber" });
     sources.focus();
 
     await userEvent.type(sources, "{ArrowRight}");
 
-    expect(screen.getByRole("tab", { name: "Baca" })).toHaveAttribute("aria-selected", "true");
-    expect(screen.getByRole("tab", { name: "Baca" })).toHaveFocus();
+    expect(screen.getByRole("tab", { name: "1 Baca" })).toHaveAttribute("aria-selected", "true");
+    expect(screen.getByRole("tab", { name: "1 Baca" })).toHaveFocus();
   });
 });
 
@@ -582,7 +580,7 @@ describe("Workspace module management", () => {
       <Workspace detail={detailFixture()} online={false} onModuleDeleted={onModuleDeleted} />,
     );
 
-    await userEvent.click(screen.getByRole("button", { name: "Hapus modul" }));
+    await userEvent.click(screen.getByRole("button", { name: /Hapus modul/ }));
     const dialog = screen.getByRole("dialog");
     expect(dialog).toHaveAttribute("aria-modal", "true");
     await userEvent.click(within(dialog).getByRole("button", { name: "Batal" }));
@@ -590,9 +588,9 @@ describe("Workspace module management", () => {
     expect(calls.some((c) => c.method === "DELETE")).toBe(false);
     expect(onModuleDeleted).not.toHaveBeenCalled();
 
-    await userEvent.click(screen.getByRole("button", { name: "Hapus modul" }));
+    await userEvent.click(screen.getByRole("button", { name: /Hapus modul/ }));
     await userEvent.click(
-      within(screen.getByRole("dialog")).getByRole("button", { name: "Hapus modul" }),
+      within(screen.getByRole("dialog")).getByRole("button", { name: /Hapus modul/ }),
     );
 
     await waitFor(() => expect(onModuleDeleted).toHaveBeenCalledTimes(1));
@@ -602,7 +600,7 @@ describe("Workspace module management", () => {
   it("shows the module version history in Sumber", async () => {
     render(<Workspace detail={detailFixture()} online={false} />);
 
-    await userEvent.click(screen.getByRole("tab", { name: "Sumber" }));
+    await userEvent.click(screen.getByRole("tab", { name: "4 Sumber" }));
 
     expect(screen.getByText("v1")).toBeInTheDocument();
     expect(screen.getByText("initial synthesis")).toBeInTheDocument();
@@ -649,11 +647,11 @@ describe("Workspace grounding block (Tier 1 hard gate)", () => {
     expect(screen.getByText(/Isi modul ditahan/i)).toBeInTheDocument();
 
     // Q&A tab is gated too.
-    await user.click(screen.getByRole("tab", { name: "Tanya" }));
+    await user.click(screen.getByRole("tab", { name: "2 Tanya" }));
     expect(screen.getByText(/Tanya ditahan/i)).toBeInTheDocument();
 
     // Practice tab is gated too.
-    await user.click(screen.getByRole("tab", { name: "Latihan" }));
+    await user.click(screen.getByRole("tab", { name: "3 Latihan" }));
     expect(screen.getByText(/Latihan ditahan/i)).toBeInTheDocument();
 
     // Exports are withheld (disabled spans, not real download links).

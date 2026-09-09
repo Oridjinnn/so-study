@@ -18,24 +18,17 @@ function readStoredTheme(): Theme | null {
     const stored = localStorage.getItem(THEME_KEY);
     return stored === "light" || stored === "dark" ? stored : null;
   } catch {
-    // Safari private mode throws on storage access. Handled, not swallowed: the
-    // caller falls back to the OS preference so the toggle still works.
     return null;
   }
 }
 
 function systemPrefersDark(): boolean {
-  // `matchMedia` is missing in jsdom (and older embedded WebViews), so probe it.
   return (
     typeof window.matchMedia === "function" &&
     window.matchMedia("(prefers-color-scheme: dark)").matches
   );
 }
 
-/**
- * `.dark`/`.light` on `<html>` drives both the CSS tokens and every `dark:`
- * utility (see the `@custom-variant dark` in `app/globals.css`).
- */
 function applyTheme(theme: Theme): void {
   const root = document.documentElement;
   root.classList.toggle("dark", theme === "dark");
@@ -43,10 +36,6 @@ function applyTheme(theme: Theme): void {
 }
 
 function ThemeToggle() {
-  // The stored choice lives in localStorage, which the server render cannot
-  // see, so it is re-applied on mount (and after React's dev-mode remount
-  // resets the <html> class). With no stored choice we deliberately leave the
-  // root element untouched: the `prefers-color-scheme` fallback stays in charge.
   useEffect(() => {
     const stored = readStoredTheme();
     if (stored) applyTheme(stored);
@@ -63,36 +52,36 @@ function ThemeToggle() {
     }
   }
 
-    return (
-      <button
-        type="button"
-        onClick={toggle}
-        title="Ganti tema terang/gelap"
-        className={SECONDARY_CLASS}
-      >
-        <Icon name="theme" /> Tema
-      </button>
-    );
+  return (
+    <button
+      type="button"
+      onClick={toggle}
+      title="Ganti tema terang/gelap"
+      className={SECONDARY_CLASS}
+    >
+      <Icon name="theme" /> Tema
+    </button>
+  );
 }
 
 function NewTopicButton({ onClick }: { onClick: () => void }) {
   return (
-      <button
-        type="button"
-        onClick={onClick}
-        className={PRIMARY_CLASS}
-      >
-        <Icon name="plus" /> Topik baru
-      </button>
+    <button
+      type="button"
+      onClick={onClick}
+      className={PRIMARY_CLASS}
+    >
+      <Icon name="plus" /> Topik baru
+    </button>
   );
 }
 
 /** Semester-level action: many courses at once, next to the course list it fills. */
 function BatchImportButton({ onClick }: { onClick: () => void }) {
   return (
-      <button type="button" onClick={onClick} className={SECONDARY_CLASS}>
-        Impor semester
-      </button>
+    <button type="button" onClick={onClick} className={SECONDARY_CLASS}>
+      Impor semester
+    </button>
   );
 }
 
@@ -110,7 +99,7 @@ function CourseList({
   if (courses.length === 0) {
     return (
       <p className="px-2 py-4 text-sm text-muted">
-        Belum ada mata kuliah — tambah topik baru di atas untuk mulai belajar.
+        Belum ada mata kuliah — tambah topik baru untuk mulai belajar.
       </p>
     );
   }
@@ -125,11 +114,11 @@ function CourseList({
             type="button"
             onClick={() => onSelectCourse(c.id)}
             aria-current={active ? "true" : undefined}
-className={`tap block w-full rounded-card px-3 py-2.5 text-left transition anim-fade-in-up ${
-               active
-                 ? "bg-brand-500/10 ring-1 ring-brand-500"
-                 : "hover:bg-zinc-100 dark:hover:bg-zinc-800/60"
-             }`}
+            className={`tap block w-full rounded-card px-3 py-2.5 text-left transition anim-fade-in-up ${
+              active
+                ? "bg-brand-500/10 ring-1 ring-brand-500"
+                : "hover:bg-zinc-100 dark:hover:bg-zinc-800/60"
+            }`}
           >
             <div className="flex items-center gap-2">
               {active && (
@@ -168,6 +157,7 @@ export default function Sidebar({
   onNew,
   onBatchImport,
   dueTodayByCourse,
+  activeCourseName,
 }: {
   courses: CourseSummary[];
   activeCourseId: string | null;
@@ -175,13 +165,14 @@ export default function Sidebar({
   onNew: () => void;
   onBatchImport?: () => void;
   dueTodayByCourse?: Record<string, number>;
+  activeCourseName?: string;
 }) {
-  const [drawerOpen, setDrawerOpen] = useState(false);
+  const [courseDrawerOpen, setCourseDrawerOpen] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(false);
 
   return (
     <>
-      {/* Desktop/iPad-landscape rail. Hidden below `md`, where the same nav is
-          reachable from the hamburger below. */}
+      {/* Desktop/iPad-landscape rail */}
       <aside className="hidden w-64 shrink-0 flex-col border-r border-border bg-card/70 md:flex">
         <div className="space-y-3 p-4">
           <NewTopicButton onClick={onNew} />
@@ -200,37 +191,63 @@ export default function Sidebar({
         </nav>
       </aside>
 
-      {/* Mobile drawer trigger. Fixed just below the sticky app header (~4rem)
-          so it never covers the header's title/status dot. */}
-      <button
-        type="button"
-        onClick={() => setDrawerOpen(true)}
-        aria-haspopup="dialog"
-        aria-expanded={drawerOpen}
-        className="tap card-lift fixed top-[4.5rem] left-3 z-30 flex min-h-11 min-w-11 items-center justify-center rounded-card border border-border bg-card text-foreground shadow-lg md:hidden"
+      {/* Mobile bottom nav bar */}
+      <nav
+        className="fixed inset-x-0 bottom-0 z-40 flex items-center justify-around border-t border-border bg-white/95 backdrop-blur dark:bg-zinc-900/95 md:hidden"
+        style={{ paddingBottom: "env(safe-area-inset-bottom)" }}
+        aria-label="Navigasi utama"
       >
-        <Icon name="menu" />
-        <span className="sr-only">Buka daftar mata kuliah</span>
-      </button>
+        <button
+          type="button"
+          onClick={() => setCourseDrawerOpen(true)}
+          className="tap flex flex-col items-center gap-0.5 px-3 py-2 text-link"
+          aria-label="Daftar mata kuliah"
+        >
+          <Icon name="book" className="size-5" />
+          <span className="text-[10px] font-medium">Mata kuliah</span>
+          {activeCourseName && (
+            <span className="max-w-[72px] truncate text-[9px] text-muted">{activeCourseName}</span>
+          )}
+        </button>
+        <button
+          type="button"
+          onClick={onNew}
+          className="tap flex flex-col items-center gap-0.5 rounded-card bg-brand-600 px-5 py-2 text-white shadow-sm"
+          aria-label="Buat topik baru"
+        >
+          <Icon name="plus" className="size-5" />
+          <span className="text-[10px] font-semibold">+ Topik</span>
+        </button>
+        <button
+          type="button"
+          onClick={() => setSettingsOpen(true)}
+          className="tap flex flex-col items-center gap-0.5 px-3 py-2 text-muted"
+          aria-label="Pengaturan"
+        >
+          <Icon name="settings" className="size-5" />
+          <span className="text-[10px] font-medium">Settings</span>
+        </button>
+      </nav>
 
-      {drawerOpen && (
+      {/* Mobile course drawer */}
+      {courseDrawerOpen && (
         <Modal
           open
           title="Mata kuliah"
-          onClose={() => setDrawerOpen(false)}
+          onClose={() => setCourseDrawerOpen(false)}
           className="mr-auto max-w-xs"
         >
           <div className="flex max-h-[70vh] flex-col gap-3 p-4">
             <NewTopicButton
               onClick={() => {
-                setDrawerOpen(false);
+                setCourseDrawerOpen(false);
                 onNew();
               }}
             />
             {onBatchImport && (
               <BatchImportButton
                 onClick={() => {
-                  setDrawerOpen(false);
+                  setCourseDrawerOpen(false);
                   onBatchImport();
                 }}
               />
@@ -241,7 +258,7 @@ export default function Sidebar({
                 activeCourseId={activeCourseId}
                 onSelectCourse={(id) => {
                   onSelectCourse(id);
-                  setDrawerOpen(false);
+                  setCourseDrawerOpen(false);
                 }}
                 dueTodayByCourse={dueTodayByCourse}
               />
@@ -249,6 +266,22 @@ export default function Sidebar({
             <ThemeToggle />
             <DataBackup />
             <AccountBar />
+          </div>
+        </Modal>
+      )}
+
+      {/* Mobile settings sheet */}
+      {settingsOpen && (
+        <Modal open title="Pengaturan" onClose={() => setSettingsOpen(false)} className="max-w-xs">
+          <div className="flex flex-col gap-3 p-4">
+            <p className="text-sm font-medium text-muted">Tema</p>
+            <ThemeToggle />
+            <div className="border-t border-border pt-3">
+              <DataBackup />
+            </div>
+            <div className="border-t border-border pt-3">
+              <AccountBar />
+            </div>
           </div>
         </Modal>
       )}

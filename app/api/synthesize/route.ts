@@ -228,7 +228,11 @@ export async function POST(req: NextRequest) {
   try {
     await assertBudget();
   } catch (e) {
-    return NextResponse.json({ error: (e as Error).message }, { status: 429 });
+    console.error("[synthesize] budget check failed", e);
+    return NextResponse.json(
+      { error: "Gagal memeriksa anggaran AI; coba lagi nanti." },
+      { status: 429 },
+    );
   }
 
   let papers: SourcePaper[];
@@ -867,6 +871,10 @@ export async function POST(req: NextRequest) {
       accuracy,
     });
   } catch (e) {
-    return NextResponse.json({ error: (e as Error).message }, { status: 502 });
+    console.error("[synthesize] fatal error", e);
+    return NextResponse.json(
+      { error: "Penyintesis modul gagal; coba lagi nanti." },
+      { status: 502 },
+    );
   }
 }

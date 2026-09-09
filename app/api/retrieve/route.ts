@@ -1,3 +1,4 @@
+import { mapWithConcurrencyLimit } from "@/src/lib/concurrency";
 import { NextRequest, NextResponse } from "next/server";
 import { retrieveSources, SourcePaper } from "@/src/lib/sources";
 import { expandKeywords, scoringTerms } from "@/src/lib/keywords";
@@ -83,8 +84,9 @@ export async function POST(req: NextRequest) {
       scoringTerms: rankingTerms,
     });
   } catch (e) {
+    console.error("[retrieve] retrieval failed", e);
     return NextResponse.json(
-      { error: `Retrieval failed: ${(e as Error).message}` },
+      { error: "Gagal mengambil paper: layanan pencarian sedang sibuk atau offline." },
       { status: 502 },
     );
   }
@@ -107,66 +109,72 @@ export async function POST(req: NextRequest) {
     courseId: body.courseId,
   });
 
-  const candidates = [];
-  for (const p of raw) {
-    if (!p.sourceUrl) continue;
-    const paper = await prisma.paper.upsert({
-      where: { sourceUrl: p.sourceUrl },
-      update: {
-        title: p.title,
-        authors: p.authors,
-        year: p.year,
-        abstract: p.abstract,
-        citationCount: p.citationCount,
-        relevanceScore: p.relevanceScore,
-        fullTextAvailable: p.fullTextAvailable,
-        doi: p.doi ?? null,
-        venue: p.venue ?? null,
-        volume: p.volume ?? null,
-        issue: p.issue ?? null,
-        pages: p.pages ?? null,
-        publisher: p.publisher ?? null,
-        type: p.type ?? null,
-        providers: p.provider,
-      },
-      create: {
-        title: p.title,
-        authors: p.authors,
-        year: p.year,
-        abstract: p.abstract,
-        sourceUrl: p.sourceUrl,
-        citationCount: p.citationCount,
-        relevanceScore: p.relevanceScore,
-        fullTextAvailable: p.fullTextAvailable,
-        doi: p.doi ?? null,
-        venue: p.venue ?? null,
-        volume: p.volume ?? null,
-        issue: p.issue ?? null,
-        pages: p.pages ?? null,
-        publisher: p.publisher ?? null,
-        type: p.type ?? null,
-        providers: p.provider,
-      },
-    });
-    const tp = await prisma.topicPaper.upsert({
-      where: { topicId_paperId: { topicId: topic.id, paperId: paper.id } },
-      update: {},
-      create: { topicId: topic.id, paperId: paper.id, approved: false },
-    });
-    candidates.push({
-      id: paper.id,
-      title: paper.title,
-      authors: paper.authors,
-      year: paper.year,
-      citationCount: paper.citationCount,
-      relevanceScore: paper.relevanceScore,
-        sourceUrl: paper.sourceUrl,
-        fullTextAvailable: paper.fullTextAvailable,
-        language: p.language ?? null,
-        venue: paper.venue ?? null,
-        type: paper.type ?? null,
-        approved: tp.approved,
+  const candidates: { id: string; title: string; authors: string; year: number; citationCount: number; relevanceScore: number; sourceUrl: string; fullTextAvailable: boolean; language: string | null; venue: string | null; type: string | null; approved: boolean }[] = [];
+  const written = await mapWithConcurrencyLimit(
+    raw.filter((p) => p.sourceUrl),
+    4,
+    async (p) => {
+      const paper = await prisma.paper.upsert({
+        where: { sourceUrl: p.sourceUrl },
+        update: {
+          title: p.title,
+          authors: p.authors,
+          year: p.year,
+          abstract: p.abstract,
+          citationCount: p.citationCount,
+          relevanceScore: p.relevanceScore,
+          fullTextAvailable: p.fullTextAvailable,
+          doi: p.doi ?? null,
+          venue: p.venue ?? null,
+          volume: p.volume ?? null,
+          issue: p.issue ?? null,
+          pages: p.pages ?? null,
+          publisher: p.publisher ?? null,
+          type: p.type ?? null,
+          providers: p.provider,
+        },
+        create: {
+          title: p.title,
+          authors: p.authors,
+          year: p.year,
+          abstract: p.abstract,
+          sourceUrl: p.sourceUrl,
+          citationCount: p.citationCount,
+          relevanceScore: p.relevanceScore,
+          fullTextAvailable: p.fullTextAvailable,
+          doi: p.doi ?? null,
+          venue: p.venue ?? null,
+          volume: p.volume ?? null,
+          issue: p.issue ?? null,
+          pages: p.pages ?? null,
+          publisher: p.publisher ?? null,
+          type: p.type ?? null,
+          providers: p.provider,
+        },
       });
+      const tp = await prisma.topicPaper.upsert({
+        where: { topicId_paperId: { topicId: topic.id, paperId: paper.id } },
+        update: {},
+        create: { topicId: topic.id, paperId: paper.id, approved: false },
+      });
+      return { paper, tp, language: p.language ?? null };
+    },
+  );
+  for (const w of written) {
+    candidates.push({
+      id: w.paper.id,
+      title: w.paper.title,
+      authors: w.paper.authors,
+      year: w.paper.year,
+      citationCount: w.paper.citationCount,
+      relevanceScore: w.paper.relevanceScore,
+      sourceUrl: w.paper.sourceUrl,
+      fullTextAvailable: w.paper.fullTextAvailable,
+      language: w.language,
+      venue: w.paper.venue ?? null,
+      type: w.paper.type ?? null,
+      approved: w.tp.approved,
+    });
   }
 
   await prisma.topic.update({

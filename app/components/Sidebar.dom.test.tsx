@@ -21,7 +21,7 @@ describe("Sidebar", () => {
   it("renders the course nav and a responsive hamburger trigger", () => {
     render(<Sidebar courses={COURSES} activeCourseId={null} onSelectCourse={() => {}} onNew={() => {}} />);
     expect(screen.getByText("Kursus Antropologi")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /Buka daftar mata kuliah/ })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Daftar mata kuliah/ })).toBeInTheDocument();
   });
 
   it("selects a course via the nav", async () => {

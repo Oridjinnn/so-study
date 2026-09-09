@@ -63,7 +63,12 @@ export async function GET(req: Request, ctx: RouteContext<"/api/modules/[id]">) 
   if (!mod) return notFoundForUser("Modul");
   let paperIds: string[] = [];
   try {
-    paperIds = JSON.parse(mod.sourcePaperIds || "[]");
+    const parsed = JSON.parse(mod.sourcePaperIds || "[]");
+    if (Array.isArray(parsed) && parsed.every((x) => typeof x === "string")) {
+      paperIds = parsed;
+    } else {
+      console.warn("[modules] sourcePaperIds is not an array of strings, got", typeof parsed, Array.isArray(parsed) ? parsed.slice(0, 3) : parsed);
+    }
   } catch {
     paperIds = [];
   }

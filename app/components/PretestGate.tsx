@@ -5,35 +5,25 @@
 // not a penalty — being wrong is what primes attention for the passage that
 // follows, so the score is shown but never stored as graded study.
 //
-// Evidence:
-//   - Richland, Kornell & Kao (2009), "Can unsuccessful tests enhance learning?"
-//     J. Exp. Psychol. Appl. — unsuccessful retrieval before study still helps.
-//   - Pan & Carpenter (2023), Educ. Psychol. Rev. — pretesting review; benefits
-//     hold for related and unrelated material when feedback follows.
-//
-// One gate per topic: the localStorage flag below makes it a warm-up, not a toll
-// booth on every visit.
+// Rendered as a collapsible banner at the top of the Baca tab so the student
+// can still see the reader below while answering.
 
 import { useEffect, useState } from "react";
 import type { QuestionBankItem } from "../lib/types";
 import { apiFetch } from "../lib/api";
 import MCQOptions from "./MCQOptions";
 
-/** How many prequestions to draw from the topic's bank. */
 export const PRETEST_COUNT = 5;
 
 export function pretestKey(topicId: string): string {
   return `pretest:${topicId}`;
 }
 
-/** Has this topic's pretest already been taken (or skipped) on this device? */
 export function hasTakenPretest(topicId: string): boolean {
   if (typeof window === "undefined") return true;
   try {
     return window.localStorage.getItem(pretestKey(topicId)) != null;
   } catch {
-    // Storage blocked (Safari private mode): do not trap the reader behind a
-    // gate we can never remember dismissing.
     return true;
   }
 }
@@ -46,11 +36,10 @@ function markTaken(topicId: string, outcome: { score: number; total: number } | 
       JSON.stringify({ at: new Date().toISOString(), outcome }),
     );
   } catch {
-    /* handled: the gate simply re-appears next time storage is unavailable */
+    /* handled */
   }
 }
 
-/** Fisher–Yates on a copy; the draw should differ per visit, so Math.random. */
 function shuffle<T>(items: T[]): T[] {
   const a = items.slice();
   for (let i = a.length - 1; i > 0; i--) {
@@ -65,7 +54,6 @@ export default function PretestGate({
   onDone,
 }: {
   topicId: string;
-  /** Called once the student finishes or skips; unlocks the reader. */
   onDone: () => void;
 }) {
   const [items, setItems] = useState<QuestionBankItem[]>([]);
@@ -73,6 +61,7 @@ export default function PretestGate({
   const [error, setError] = useState<string | null>(null);
   const [picks, setPicks] = useState<Record<string, string>>({});
   const [graded, setGraded] = useState(false);
+  const [open, setOpen] = useState(true);
 
   useEffect(() => {
     let cancelled = false;
@@ -92,111 +81,126 @@ export default function PretestGate({
         setError(e.message);
         setLoading(false);
       });
-    return () => {
-      cancelled = true;
-    };
+    return () => { cancelled = true; };
   }, [topicId]);
 
   const correct = items.filter((q) => picks[q.id] === q.answer).length;
 
   function finish(outcome: { score: number; total: number } | "skipped") {
     markTaken(topicId, outcome);
+    setOpen(false);
     onDone();
   }
 
+  const hasQuestions = items.length > 0 && !loading && !error;
+
   return (
-    <section
-      aria-labelledby="pretest-title"
-      className="rounded-card border border-border bg-card p-5"
-    >
-      <h3 id="pretest-title" className="text-lg font-semibold">
-        Pra-tes singkat sebelum membaca
-      </h3>
-      <p className="mt-1 text-sm text-muted">
-        Jawab dulu walau belum tahu — menebak <em>salah</em> pun membuat Anda lebih peka pada
-        jawabannya saat membaca (Richland dkk. 2009; Pan &amp; Carpenter 2023). Tidak ada nilai
-        yang disimpan.
-      </p>
-
-      <p role="status" aria-live="polite" className="sr-only">
-        {graded ? `Skor pra-tes ${correct} dari ${items.length}.` : ""}
-      </p>
-
-      {error && (
-        <div
-          role="alert"
-          className="mt-3 rounded-card border border-red-300 bg-red-50 px-3 py-2 text-sm text-red-700 dark:border-red-800 dark:bg-red-950/40 dark:text-red-300"
-        >
-          {error}
-        </div>
-      )}
-
-      {loading ? (
-        <p className="mt-3 text-sm text-muted">Menyiapkan prequestion…</p>
-      ) : items.length === 0 ? (
-        <p className="mt-3 text-sm text-muted">
-          Belum ada soal untuk topik ini, jadi tidak ada prequestion. Setelah membaca, buat
-          beberapa soal sendiri di <strong>Latihan → Pilihan Ganda</strong> supaya pra-tes berikutnya
-          bisa dipakai.
-        </p>
-      ) : (
-        <ol className="mt-4 space-y-3">
-          {items.map((q, idx) => {
-            const chosen = picks[q.id] ?? null;
-            return (
-              <li key={q.id} className="rounded-card bg-zinc-50 p-3 dark:bg-zinc-800/40">
-                <p className="text-sm font-medium">
-                  {idx + 1}. {q.stem}
-                </p>
-                <MCQOptions
-                  options={q.options}
-                  chosen={chosen}
-                  answered={graded}
-                  answer={q.answer}
-                  onChoose={(opt) => setPicks((p) => ({ ...p, [q.id]: opt }))}
-                  disabled={graded}
-                  name={`pretest-${q.id}`}
-                />
-                {graded && q.explanation && (
-                  <p className="mt-2 text-xs text-muted">{q.explanation}</p>
-                )}
-              </li>
-            );
-          })}
-        </ol>
-      )}
-
-      {graded && (
-        <p className="mt-3 text-sm font-semibold">
-          Skor pra-tes: {correct}/{items.length} — sekarang baca modulnya dan perhatikan bagian
-          yang tadi Anda tebak salah.
-        </p>
-      )}
-
-      <div className="mt-4 flex flex-wrap gap-2">
-        {items.length > 0 && !graded && (
-          <button
-            type="button"
-            onClick={() => setGraded(true)}
-            className="tap min-h-11 rounded-card bg-brand-600 px-4 py-2 text-sm font-medium text-white transition hover:bg-brand-700 focus-visible:ring-2 focus-visible:ring-brand-500 focus-visible:outline-none"
-          >
-            Periksa jawaban
-          </button>
-        )}
+    <div className="rounded-card border border-brand-200 bg-brand-50/60 dark:border-brand-700 dark:bg-brand-950/30 print:hidden">
+      <div className="flex items-center justify-between px-4 py-2.5">
         <button
           type="button"
-          onClick={() =>
-            finish(graded || items.length === 0 ? { score: correct, total: items.length } : "skipped")
-          }
-          className={`tap min-h-11 rounded-card px-4 py-2 text-sm font-medium transition focus-visible:ring-2 focus-visible:ring-brand-500 focus-visible:outline-none ${
-            graded || items.length === 0
-              ? "bg-brand-600 text-white hover:bg-brand-700"
-              : "border border-border text-muted hover:bg-zinc-100 dark:hover:bg-zinc-800"
-          }`}
+          onClick={() => setOpen((v) => !v)}
+          aria-expanded={open}
+          className="flex flex-1 items-center justify-between gap-2 text-left"
         >
-          {graded || items.length === 0 ? "Lanjut ke modul" : "Lewati pra-tes"}
+          <h3 className="text-sm font-semibold text-link">Pra-tes singkat sebelum membaca</h3>
+          <span className="text-xs text-muted">{open ? "Sembunyikan" : "Tampilkan"}</span>
+        </button>
+        <button
+          type="button"
+          onClick={() => finish("skipped")}
+          className="ml-3 shrink-0 text-xs text-muted underline-offset-2 hover:underline"
+        >
+          Lewati pra-tes
         </button>
       </div>
-    </section>
+
+      {open && (
+        <div className="border-t border-brand-200 px-4 pb-4 pt-3 dark:border-brand-700">
+          <p className="text-xs text-muted">
+            Menjawab pertanyaan ini sebelum membaca membantu otak memproses informasi lebih baik.
+            <span
+              title="Richland, Kornell & Kao (2009) J. Exp. Psychol. Appl.; Pan & Carpenter (2023) Educ. Psychol. Rev."
+              className="ml-1 cursor-help underline decoration-dotted underline-offset-2"
+            >
+              ?
+            </span>
+          </p>
+
+          <p role="status" aria-live="polite" className="sr-only">
+            {graded ? `Skor pra-tes ${correct} dari ${items.length}.` : ""}
+          </p>
+
+          {error && (
+            <div role="alert" className="mt-3 rounded-card border border-red-300 bg-red-50 px-3 py-2 text-xs text-red-700 dark:border-red-800 dark:bg-red-950/40 dark:text-red-300">
+              {error}
+            </div>
+          )}
+
+          {loading ? (
+            <p className="mt-3 text-xs text-muted">Menyiapkan prequestion…</p>
+          ) : items.length === 0 ? (
+            <p className="mt-3 text-xs text-muted">
+              Belum ada soal untuk topik ini. Setelah membaca, buat beberapa soal sendiri di{" "}
+              <strong>Latihan → Pilihan Ganda</strong>.
+            </p>
+          ) : (
+            <ol className="mt-3 space-y-2">
+              {items.map((q, idx) => {
+                const chosen = picks[q.id] ?? null;
+                return (
+                  <li key={q.id} className="rounded-card bg-white/70 p-2.5 dark:bg-zinc-800/40">
+                    <p className="text-xs font-medium">{idx + 1}. {q.stem}</p>
+                    <MCQOptions
+                      options={q.options}
+                      chosen={chosen}
+                      answered={graded}
+                      answer={q.answer}
+                      onChoose={(opt) => setPicks((p) => ({ ...p, [q.id]: opt }))}
+                      disabled={graded}
+                      name={`pretest-${q.id}`}
+                    />
+                    {graded && q.explanation && (
+                      <p className="mt-1.5 text-[11px] text-muted">{q.explanation}</p>
+                    )}
+                  </li>
+                );
+              })}
+            </ol>
+          )}
+
+          {graded && (
+            <p className="mt-2.5 text-xs font-semibold">
+              Skor: {correct}/{items.length} — perhatikan bagian yang Anda tebak salah saat membaca.
+            </p>
+          )}
+
+          <div className="mt-3 flex flex-wrap gap-2">
+            {hasQuestions && !graded && (
+              <button
+                type="button"
+                onClick={() => setGraded(true)}
+                className="tap min-h-10 rounded-card bg-brand-600 px-3.5 py-1.5 text-xs font-medium text-white transition hover:bg-brand-700 focus-visible:ring-2 focus-visible:ring-brand-500 focus-visible:outline-none"
+              >
+                Periksa jawaban
+              </button>
+            )}
+            <button
+              type="button"
+              onClick={() =>
+                finish(graded || !hasQuestions ? { score: correct, total: items.length } : "skipped")
+              }
+              className={`tap min-h-10 rounded-card px-3.5 py-1.5 text-xs font-medium transition focus-visible:ring-2 focus-visible:ring-brand-500 focus-visible:outline-none ${
+                graded || !hasQuestions
+                  ? "bg-brand-600 text-white hover:bg-brand-700"
+                  : "border border-border text-muted hover:bg-brand-100 dark:hover:bg-brand-900/40"
+              }`}
+            >
+              {graded || !hasQuestions ? "Lanjut ke modul" : "Lewati pra-tes"}
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
   );
 }

@@ -12,7 +12,7 @@ const COURSES = [{ id: "c1", name: "Kursus A", major: "Antropologi" }];
 describe("Composer", () => {
   it("renders the form fields and a primary submit with an adequate tap target", () => {
     render(<Composer courses={COURSES} onCreate={() => {}} onClose={() => {}} busy={false} />);
-    const submit = screen.getByRole("button", { name: /Sintesis/ });
+    const submit = screen.getByRole("button", { name: /Buat topik/ });
     expect(submit).toBeInTheDocument();
     expect(submit.className).toContain("min-h-11");
     expect(screen.getByPlaceholderText(/Mis\. Teori Pertukaran/)).toBeInTheDocument();
@@ -23,7 +23,7 @@ describe("Composer", () => {
     const onCreate = vi.fn();
     render(<Composer courses={COURSES} onCreate={onCreate} onClose={() => {}} busy={false} />);
     await user.type(screen.getByPlaceholderText(/Mis\. Teori Pertukaran/), "Topik Baru");
-    await user.click(screen.getByRole("button", { name: /Sintesis/ }));
+    await user.click(screen.getByRole("button", { name: /Buat topik/ }));
     expect(onCreate).toHaveBeenCalledWith(
       expect.objectContaining({ title: "Topik Baru", keywords: [] }),
     );
@@ -35,13 +35,13 @@ describe("Composer", () => {
     render(<Composer courses={COURSES} onCreate={onCreate} onClose={() => {}} busy={false} />);
 
     await user.type(screen.getByPlaceholderText(/Mis\. Teori Pertukaran/), "Topik Baru");
+    await user.click(screen.getByRole("button", { name: "Buat baru" }));
     await user.type(
       screen.getByPlaceholderText(/Buat mata kuliah baru/),
       "Antropologi Ekologi",
     );
-    // The jurusan field appears only once it can be used.
     await user.type(screen.getByLabelText("Jurusan"), "Antropologi");
-    await user.click(screen.getByRole("button", { name: /Sintesis/ }));
+    await user.click(screen.getByRole("button", { name: /Buat topik/ }));
 
     expect(onCreate).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -63,8 +63,8 @@ describe("Composer", () => {
         busy={false}
       />,
     );
-    // Re-asking would imply the major can be changed here, which the API refuses.
     expect(screen.queryByLabelText("Jurusan")).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Buat baru" }));
     await user.type(screen.getByPlaceholderText(/Buat mata kuliah baru/), "Kursus Baru");
     expect(screen.getByLabelText("Jurusan")).toBeInTheDocument();
   });

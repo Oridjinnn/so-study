@@ -56,11 +56,33 @@ const PROVIDERS: SourceProvider[] = [
 // whole retrieval, but we still want real results rather than an instant empty.
 const PER_PROVIDER_TIMEOUT_MS = 9000;
 
-function withTimeout<T>(p: Promise<T>, ms: number): Promise<T> {
-  return Promise.race([
-    p,
-    new Promise<T>((_, reject) => setTimeout(() => reject(new Error("timeout")), ms)),
-  ]);
+/**
+ * Wrap `p` in a timeout that also rejects promptly when `signal` fires, so a
+ * timed-out HTTP fetch does not keep the TCP connection open indefinitely.
+ */
+function withTimeout<T>(p: Promise<T>, ms: number, signal?: AbortSignal): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(() => {
+      signal?.removeEventListener("abort", onAbort);
+      reject(new Error("timeout"));
+    }, ms);
+    const onAbort = () => {
+      clearTimeout(timer);
+      reject(new Error("timeout"));
+    };
+    signal?.addEventListener("abort", onAbort, { once: true });
+    Promise.resolve(p)
+      .then((v) => {
+        clearTimeout(timer);
+        signal?.removeEventListener("abort", onAbort);
+        resolve(v);
+      })
+      .catch((e) => {
+        clearTimeout(timer);
+        signal?.removeEventListener("abort", onAbort);
+        reject(e);
+      });
+  });
 }
 
 /**
@@ -74,11 +96,14 @@ export async function retrieveSources(
   opts: RetrieveOptions = {}
 ): Promise<SourcePaper[]> {
   const settled = await Promise.allSettled(
-    PROVIDERS.map((pr) =>
-      withTimeout(pr.search(query, keywords, opts), PER_PROVIDER_TIMEOUT_MS).catch(
-        () => [] as SourcePaper[]
-      )
-    )
+    PROVIDERS.map((pr) => {
+      const controller = new AbortController();
+      return withTimeout(
+        pr.search(query, keywords, opts, controller.signal),
+        PER_PROVIDER_TIMEOUT_MS,
+        controller.signal,
+      ).catch(() => [] as SourcePaper[]);
+    })
   );
 
   const collected: SourcePaper[] = [];
@@ -119,7 +144,7 @@ export async function retrieveSources(
   // pre-set relevanceScore):
   //   • keyword   — lexical overlap of the paper with `terms`. `terms` already
   //                 folds in the title's own significant tokens plus any user
-  //                 keywords (see scoringTerms), so this is the keyword-match leg.
+  //                 keywords (see scoringTerms), so the keyword-match leg.
   //   • heuristic — titleHeuristicScore: overlap of the paper with the title's
   //                 OWN tokens AND bigrams (the title used as its own phrase-level
   //                 query). This is what lets a title like "Kebijakan fiskal dan

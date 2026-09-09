@@ -26,6 +26,12 @@
 .reader-scroll {
   scrollbar-width: thin;
   scrollbar-color: var(--color-border) transparent;
+  max-height: calc(100vh - 15rem);
+}
+@supports (height: 1dvh) {
+  .reader-scroll {
+    max-height: calc(100dvh - 15rem);
+  }
 }
 .reader-scroll::-webkit-scrollbar {
   width: 14px;
@@ -270,6 +276,11 @@ body {
 }
 .soso-fade {
   animation: soso-fade 300ms ease-out;
+}
+
+@keyframes pulse-gentle {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.5; }
 }
 
 /* Native screen transitions (View Transitions API, driven by

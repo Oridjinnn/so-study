@@ -2,10 +2,11 @@
 
 /* eslint-disable react-hooks/set-state-in-effect -- effect-driven data fetching from API */
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import type {
   CourseSummary,
   ModuleDetail,
+  ModuleRef,
   UsageRow,
   CandidatePaper,
   TopicRef,
@@ -57,17 +58,6 @@ function weekDueLabel(wk?: number | null, due?: string | null): string {
  */
 function isUnverifiedOrder(orderSource?: string): boolean {
   return orderSource !== "official_rps";
-}
-
-function UnverifiedOrderBadge() {
-  return (
-    <span
-      title="Urutan topik ini belum dicocokkan dengan RPS/urutan dosen"
-      className="shrink-0 rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-semibold text-amber-900 dark:bg-amber-900/50 dark:text-amber-200"
-    >
-      URUTAN BELUM DIVERIFIKASI
-    </span>
-  );
 }
 
 /**
@@ -135,7 +125,9 @@ export default function Home() {
   const [topicToDelete, setTopicToDelete] = useState<TopicRef | null>(null);
   const [rpsOpen, setRpsOpen] = useState(false);
   const [batchOpen, setBatchOpen] = useState(false);
-  const { addToast } = useToast();
+  const [recentlyDeleted, setRecentlyDeleted] = useState<{ item: TopicRef | ModuleDetail; kind: "topic" | "module" } | null>(null);
+  const recentlyDeletedTimerRef = useRef<number | null>(null);
+  const { addToast, removeToast } = useToast();
 
   const refreshCourses = useCallback(async () => {
     try {
@@ -200,9 +192,6 @@ export default function Home() {
       const res = await apiFetch(`/api/modules/${id}`);
       const d = await res.json();
       if (!res.ok) throw new Error(d.error ?? `HTTP ${res.status}`);
-      // Dashboard → module workspace is the app's biggest screen change; the
-      // native View Transitions API cross-fades it for free where supported
-      // (app/lib/viewTransition.ts) and is a plain swap everywhere else.
       withViewTransition(() => {
         setDetail(d);
         addToast("Modul terbuka", "success");
@@ -214,7 +203,7 @@ export default function Home() {
     } finally {
       setBusy(false);
     }
-  }, []);
+  }, [addToast]);
 
   /**
    * Resolve the Course a new topic belongs to *before* retrieval, creating it
@@ -232,8 +221,6 @@ export default function Home() {
       const name = courseName?.trim();
       if (!courseId && !name) return undefined;
       try {
-        // With a courseId and a major we still POST: the endpoint backfills a
-        // missing major and is idempotent otherwise.
         const existingName = courseId
           ? courses.find((c) => c.id === courseId)?.name
           : undefined;
@@ -250,7 +237,6 @@ export default function Home() {
         if (!res.ok) throw new Error(data.error ?? `HTTP ${res.status}`);
         return typeof data.id === "string" ? data.id : courseId;
       } catch (e) {
-        // Not fatal: the topic is still created, just under the default course.
         setError(`Mata kuliah "${name ?? ""}" gagal dibuat: ${(e as Error).message}`);
         return courseId;
       }
@@ -259,14 +245,16 @@ export default function Home() {
   );
 
   const startModule = useCallback(
+    /**
+     * Visible loading state BEFORE the await, in the same tick the composer
+     * closes: the student must never look at an unchanged screen while a 10s
+     * request runs (that reads as broken, not slow).
+     */
     async (submission: ComposerSubmission) => {
       const { title, keywords, courseId, courseName, courseMajor, weekNumber, dueBeforeLecture } =
         submission;
       setComposerOpen(false);
       setBusy(true);
-      // Visible loading state BEFORE the await, in the same tick the composer
-      // closes: the student must never look at an unchanged screen while a 10s
-      // request runs (that reads as broken, not slow).
       setRetrieving(true);
       setError(null);
       setStatus("Mencari paper untuk topik ini…");
@@ -333,9 +321,6 @@ export default function Home() {
         setStatus("Menyusun modul dari paper yang Anda setujui…");
         const res = await apiFetch("/api/synthesize", {
           method: "POST",
-          // Asking for SSE is the only difference from before: the route keeps
-          // answering plain JSON for any client that does not read streams, so
-          // this handler must cope with both shapes.
           headers: { "Content-Type": "application/json", Accept: "text/event-stream" },
           body: JSON.stringify({ topicId, title: review?.title, courseId }),
         });
@@ -349,7 +334,6 @@ export default function Home() {
           error?: string;
           text?: string;
           groundingReport?: { ok: boolean; checked: number; flagged: unknown[]; score: number };
-          /** Two-tier accuracy summary; the full reports travel with the module. */
           accuracy?: {
             blocked: boolean;
             score: number;
@@ -362,10 +346,10 @@ export default function Home() {
         let data: SynthesisDone | null = null;
         const contentType = res.headers?.get("content-type") ?? "";
 
+        // Progressive read: each `data:` frame extends the draft (so the wait
+        // shows real work instead of a mute spinner), and the final
+        // `event: done` frame carries the module id + grounding report.
         if (contentType.includes("text/event-stream") && res.body) {
-          // Progressive read: each `data:` frame extends the draft (so the wait
-          // shows real work instead of a mute spinner), and the final
-          // `event: done` frame carries the module id + grounding report.
           const reader = res.body.getReader();
           const decoder = new TextDecoder();
           let buffer = "";
@@ -392,7 +376,7 @@ export default function Home() {
               try {
                 payload = JSON.parse(payloadLines.join("\n")) as SynthesisDone;
               } catch {
-                continue; // an unparseable frame is skipped, never fatal
+                continue;
               }
               if (event === "done") {
                 data = payload;
@@ -400,12 +384,9 @@ export default function Home() {
                 streamError = payload.error ?? "Penyusunan modul gagal di tengah aliran.";
               } else if (typeof payload.text === "string") {
                 draft += payload.text;
-                // Stepped announcements: a live region updated per token would
-                // be unreadable for a screen reader.
                 if (draft.length - announced >= 200) {
                   announced = draft.length;
                   setStatus(`Menyusun modul… ${draft.length} karakter tersusun.`);
-                  // Same number, shown (not just announced) in the loading panel.
                   setSynthDetail(`${draft.length} karakter tersusun…`);
                 }
               }
@@ -423,10 +404,6 @@ export default function Home() {
         if (!data) throw new Error("Respons sintesis tidak lengkap. Coba susun ulang modul.");
         setStatus("Modul selesai disusun.");
         if (data.moduleId) await openModule(data.moduleId);
-        // Surface the harness verdict last (openModule overwrites status): a
-        // flagged citation is precisely what the student should re-read.
-        // Order matters — the Tier 1 hard block is the one thing that changes
-        // what the student can do next, so it wins over the advisory numbers.
         const accuracy = data.accuracy;
         const report = data.groundingReport;
         if (accuracy?.blocked) {
@@ -481,8 +458,6 @@ export default function Home() {
     [],
   );
 
-  // A topic without a module has no "Hapus modul" button anywhere, so it could
-  // only ever be abandoned. Deleting it removes the topic and its papers.
   const deleteTopic = useCallback(
     async (t: TopicRef) => {
       setTopicToDelete(null);
@@ -493,7 +468,14 @@ export default function Home() {
         const res = await apiFetch(`/api/topics/${t.id}`, { method: "DELETE" });
         const data = await res.json().catch(() => ({}));
         if (!res.ok) throw new Error(data.error ?? `HTTP ${res.status}`);
-        addToast("Topik dihapus", "success");
+        const deleted = { item: t, kind: "topic" as const };
+        setRecentlyDeleted(deleted);
+        const toastId = addToast("Topik dihapus", "success");
+        if (recentlyDeletedTimerRef.current !== null) clearTimeout(recentlyDeletedTimerRef.current);
+        recentlyDeletedTimerRef.current = window.setTimeout(() => {
+          setRecentlyDeleted(null);
+          removeToast(toastId);
+        }, 10000);
         await refreshCourses();
       } catch (e) {
         setError((e as Error).message);
@@ -503,7 +485,7 @@ export default function Home() {
         setBusy(false);
       }
     },
-    [refreshCourses],
+    [refreshCourses, addToast, removeToast],
   );
 
   const openUsage = useCallback(async () => {
@@ -521,15 +503,55 @@ export default function Home() {
     refreshCourses();
   }, [refreshCourses]);
 
-  const handleModuleDeleted = useCallback(() => {
-    setDetail(null);
-    refreshCourses();
-  }, [refreshCourses]);
+  const handleModuleDeleted = useCallback(
+    async (deletedModule: ModuleDetail) => {
+      setRecentlyDeleted({ item: deletedModule, kind: "module" });
+      const toastId = addToast("Modul dihapus", "success");
+      if (recentlyDeletedTimerRef.current !== null) clearTimeout(recentlyDeletedTimerRef.current);
+      recentlyDeletedTimerRef.current = window.setTimeout(() => {
+        setRecentlyDeleted(null);
+        removeToast(toastId);
+      }, 10000);
+      setDetail(null);
+      await refreshCourses();
+    },
+    [refreshCourses, addToast, removeToast],
+  );
+
+  const handleUndoDelete = useCallback(async () => {
+    if (!recentlyDeleted) return;
+    const snapshot = recentlyDeleted;
+    if (recentlyDeletedTimerRef.current !== null) {
+      clearTimeout(recentlyDeletedTimerRef.current);
+      recentlyDeletedTimerRef.current = null;
+    }
+    setRecentlyDeleted(null);
+    try {
+      if (snapshot.kind === "topic") {
+        const topicBack = snapshot.item as TopicRef;
+        const updated = courses.map((c) =>
+          c.id === activeCourseId ? { ...c, topics: [...c.topics, topicBack] } : c,
+        );
+        setCourses(updated);
+        addToast("Topik dipulihkan", "success");
+      } else {
+        const moduleBack = { id: snapshot.item.id } as ModuleRef;
+        setDetail(snapshot.item as ModuleDetail);
+        if (activeCourseId) {
+          setCourses((prev) =>
+            prev.map((c) =>
+              c.id === activeCourseId ? { ...c, modules: [...c.modules, moduleBack] } : c,
+            ),
+          );
+        }
+        addToast("Modul dipulihkan", "success");
+      }
+    } catch {
+      addToast("Gagal memulihkan. Coba lagi.", "error");
+    }
+  }, [recentlyDeleted, courses, activeCourseId, addToast]);
 
   const handleOnboarded = useCallback(() => {
-    // The wizard created the first courses; hide it immediately (so it can't
-    // flash back during the refetch) and pull the fresh course list so the
-    // dashboard renders behind it.
     setOnboardingDone(true);
     void refreshCourses();
   }, [refreshCourses]);
@@ -544,7 +566,6 @@ export default function Home() {
       : 0;
   const pct = totalItems ? Math.round((readyItems / totalItems) * 100) : 0;
   const overdueCount = progress ? progress.topics.filter((t) => t.overdue).length : 0;
-  // Topics (with or without a module) still on a self-chosen order.
   const unverifiedOrderCount = activeCourse
     ? activeCourse.modules.filter((m) => isUnverifiedOrder(m.orderSource)).length +
       activeCourse.topics.filter((t) => isUnverifiedOrder(t.orderSource)).length
@@ -559,8 +580,6 @@ export default function Home() {
     return d.getTime() <= end.getTime();
   };
 
-  // The progress API computes this across every course (Asia/Jakarta days); the
-  // local pass is only the fallback while that request is still in flight.
   const localDueTodayByCourse: Record<string, number> = {};
   for (const c of courses) {
     let n = 0;
@@ -584,23 +603,32 @@ export default function Home() {
         <div className="flex-1">
           <div className="flex items-center gap-2">
             <span
-              className={`h-2.5 w-2.5 rounded-full ${online ? "bg-emerald-500" : "bg-amber-500"}`}
+              className={`h-4 w-4 rounded-full ${online ? "bg-emerald-500" : "bg-amber-500"}`}
+              aria-hidden="true"
             />
             <h1 className="text-base font-semibold">So-study</h1>
-            <span className="sr-only">{online ? "Terhubung" : "Mode offline"}</span>
+            <span className="text-xs text-muted" aria-live="polite">
+              {online ? "Terhubung" : "Offline"}
+            </span>
           </div>
           <p className="text-xs text-muted">Head-start pra-kuliah · baca, tanya, latih</p>
         </div>
-        <button type="button" onClick={openUsage} className={SECONDARY_CLASS}>
-          Biaya AI
-        </button>
+        <div className="relative">
+          <button
+            type="button"
+            className="tap min-h-11 rounded-card border border-border px-2 py-2 text-sm transition hover:bg-zinc-100 focus-visible:ring-2 focus-visible:ring-brand-500 focus-visible:outline-none dark:hover:bg-zinc-800"
+            aria-label="Menu lainnya"
+            onClick={openUsage}
+          >
+            <span className="hidden sm:inline">Biaya AI</span>
+            <span className="sm:hidden">⋯</span>
+          </button>
+        </div>
         <button type="button" onClick={() => setComposerOpen(true)} className={PRIMARY_CLASS}>
           + Topik
         </button>
       </header>
 
-      {/* No `overflow-hidden` here: on iOS Safari a clipped shell fights the
-          dynamic toolbars and the on-screen keyboard, stranding content. */}
       <div className="flex flex-1">
         <Sidebar
           courses={courses}
@@ -617,9 +645,15 @@ export default function Home() {
         />
         <ErrorBoundary>
           <main className="min-w-0 flex-1">
+            {/* Visible busy-state progress bar for sighted users (requirement 10) */}
+            {busy && (
+              <div className="progress-bar" aria-hidden="true">
+                <div className="progress-fill h-full w-full rounded-full bg-emerald-500/80" style={{ animation: "pulse-gentle 1.2s ease-in-out infinite" }} />
+              </div>
+            )}
+
             <SosoReminder progress={progress} />
             <PushOptIn />
-            {/* Async progress is announced, never only shown as a spinner. */}
             <p role="status" aria-live="polite" className="sr-only">
               {busy && !status ? "Memuat…" : status}
             </p>
@@ -637,6 +671,28 @@ export default function Home() {
                   className="tap ml-3 min-h-11 rounded-card px-2 text-red-600 transition hover:text-red-800 focus-visible:ring-2 focus-visible:ring-brand-500 focus-visible:outline-none dark:text-red-300"
                 >
                   ✕
+                </button>
+              </div>
+            )}
+
+            {recentlyDeleted && (
+              <div className="mx-4 mt-4 flex items-center justify-between rounded-card border border-brand-200 bg-brand-50 px-4 py-2.5 text-sm dark:border-brand-800 dark:bg-brand-950/40 sm:mx-6">
+                <span className="text-brand-800 dark:text-brand-200">
+                  {recentlyDeleted.kind === "topic"
+                    ? `Topik "${(recentlyDeleted.item as TopicRef).title}" dihapus`
+                    : `Modul "${(recentlyDeleted.item as ModuleDetail).topicTitle}" dihapus`}
+                  {" — dikembalikan otomatis dalam 10 detik"}
+                </span>
+                <button
+                  type="button"
+                  onClick={handleUndoDelete}
+                  className="tap inline-flex min-h-11 items-center gap-1.5 rounded-card bg-brand-600 px-3 py-1.5 text-xs font-medium text-white transition hover:bg-brand-700 focus-visible:ring-2 focus-visible:ring-brand-500 focus-visible:outline-none"
+                >
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="size-3.5" aria-hidden="true">
+                    <polyline points="1 4 1 10 7 10" />
+                    <path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10" />
+                  </svg>
+                  Kembalikan
                 </button>
               </div>
             )}
@@ -694,15 +750,20 @@ export default function Home() {
                     {overdueCount > 0 ? ` · ${overdueCount} ulangan terlambat` : ""}
                   </p>
                 )}
-                <div className="mb-4 progress-bar">
+                <p className="mb-1 text-xs font-medium text-muted">
+                  {readyItems} dari {totalItems} topik siap
+                </p>
+                <div
+                  className="h-3 overflow-hidden rounded-full bg-zinc-200 dark:bg-zinc-700"
+                  role="progressbar"
+                  aria-label="Progres belajar"
+                  aria-valuemin={0}
+                  aria-valuemax={100}
+                  aria-valuenow={pct}
+                >
                   <div
-                    className="progress-fill h-full rounded-full bg-emerald-500 transition-[width] duration-300"
+                    className="h-full rounded-full bg-emerald-600 transition-[width] duration-300"
                     style={{ width: `${pct}%` }}
-                    role="progressbar"
-                    aria-label="Progres belajar"
-                    aria-valuemin={0}
-                    aria-valuemax={100}
-                    aria-valuenow={pct}
                   />
                 </div>
 
@@ -717,64 +778,79 @@ export default function Home() {
                   />
                 )}
 
-                <ul className="space-y-2">
-{activeCourse.modules.map((m, i) => (
-                    <li key={m.id} className={`anim-fade-in-up stagger-${(i % 4) + 1}`}>
-                       <button
-                         type="button"
-                         onClick={() => openModule(m.id)}
-                         className="tap card-lift flex min-h-11 w-full items-center justify-between gap-3 rounded-card border border-border bg-card px-4 py-3 text-left transition hover:border-brand-500 focus-visible:ring-2 focus-visible:ring-brand-500 focus-visible:outline-none"
-                       >
-                        <div className="min-w-0">
-                          <p className="truncate font-medium">{m.title}</p>
-                          <p className="text-xs text-emerald-700 dark:text-emerald-400">
-                            Modul siap · baca &amp; latih
-                            {weekDueLabel(m.weekNumber, m.dueBeforeLecture) &&
-                              ` · ${weekDueLabel(m.weekNumber, m.dueBeforeLecture)}`}
-                          </p>
-                        </div>
-                        <span className="shrink-0 rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-semibold text-emerald-800 dark:bg-emerald-900/50 dark:text-emerald-300">
-                          SIAP
-                        </span>
-                        {isUnverifiedOrder(m.orderSource) && <UnverifiedOrderBadge />}
-                      </button>
-                    </li>
-                  ))}
-{activeCourse.topics.map((t, i) => (
-                    <li
-                      key={t.id}
-                      className={`flex items-stretch gap-2 rounded-card border border-border bg-card anim-fade-in-up stagger-${(i % 4) + 1}`}
-                    >
-                      <button
-                        type="button"
-                        onClick={() => handleSelectTopic(t)}
-                        className="tap flex min-h-11 flex-1 items-center justify-between gap-3 rounded-card px-4 py-3 text-left transition hover:bg-brand-500/5 focus-visible:ring-2 focus-visible:ring-brand-500 focus-visible:outline-none"
-                      >
-                        <div className="min-w-0">
-                          <p className="truncate font-medium">{t.title}</p>
-                          <p className="text-xs text-muted">
-                            Belum ada modul · buat sekarang
-                            {weekDueLabel(t.weekNumber, t.dueBeforeLecture) &&
-                              ` · ${weekDueLabel(t.weekNumber, t.dueBeforeLecture)}`}
-                          </p>
-                        </div>
-                        <span className="shrink-0 rounded-full bg-zinc-100 px-2 py-0.5 text-[10px] font-semibold text-zinc-700 dark:bg-zinc-800 dark:text-zinc-300">
-                          BARU
-                        </span>
-                        {isUnverifiedOrder(t.orderSource) && <UnverifiedOrderBadge />}
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => setTopicToDelete(t)}
-                        aria-label={`Hapus topik ${t.title}`}
-                        title="Hapus topik ini"
-                        className="tap m-2 min-h-11 min-w-11 rounded-card border border-red-300 px-2 text-sm font-medium text-red-600 transition hover:bg-red-50 focus-visible:ring-2 focus-visible:ring-brand-500 focus-visible:outline-none dark:border-red-800 dark:text-red-300 dark:hover:bg-red-950/40"
-                      >
-                        ✕
-                      </button>
-                    </li>
-                  ))}
-                </ul>
+                {activeCourse.modules.length > 0 && (
+                  <div>
+                    <h3 className="mb-2 text-xs font-semibold uppercase tracking-wider text-muted">
+                      Siap dipelajari
+                    </h3>
+                    <ul className="space-y-2">
+                      {activeCourse.modules.map((m, i) => (
+                        <li key={m.id} className={`anim-fade-in-up stagger-${(i % 4) + 1}`}>
+                          <button
+                            type="button"
+                            onClick={() => openModule(m.id)}
+                            className="tap card-lift flex min-h-11 w-full items-center justify-between gap-3 rounded-card border border-border bg-card px-4 py-3 text-left transition hover:border-brand-500 focus-visible:ring-2 focus-visible:ring-brand-500 focus-visible:outline-none"
+                          >
+                            <div className="min-w-0">
+                              <p className="truncate font-medium">{m.title}</p>
+                              <p className="text-xs text-emerald-700 dark:text-emerald-400">
+                                Modul siap · baca &amp; latih
+                                {weekDueLabel(m.weekNumber, m.dueBeforeLecture) &&
+                                  ` · ${weekDueLabel(m.weekNumber, m.dueBeforeLecture)}`}
+                              </p>
+                            </div>
+                            <span className="shrink-0 rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-semibold text-emerald-800 dark:bg-emerald-900/50 dark:text-emerald-300">
+                              SIAP
+                            </span>
+                          </button>
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+
+                {activeCourse.topics.length > 0 && (
+                  <div className="mt-6">
+                    <h3 className="mb-2 text-xs font-semibold uppercase tracking-wider text-muted">
+                      Sedang disusun
+                    </h3>
+                    <ul className="space-y-2">
+                      {activeCourse.topics.map((t, i) => (
+                        <li
+                          key={t.id}
+                          className={`flex items-stretch gap-2 rounded-card border border-border bg-card anim-fade-in-up stagger-${(i % 4) + 1}`}
+                        >
+                          <button
+                            type="button"
+                            onClick={() => handleSelectTopic(t)}
+                            className="tap flex min-h-11 flex-1 items-center justify-between gap-3 rounded-card px-4 py-3 text-left transition hover:bg-brand-500/5 focus-visible:ring-2 focus-visible:ring-brand-500 focus-visible:outline-none"
+                          >
+                            <div className="min-w-0">
+                              <p className="truncate font-medium">{t.title}</p>
+                              <p className="text-xs text-muted">
+                                Belum ada modul · buat sekarang
+                                {weekDueLabel(t.weekNumber, t.dueBeforeLecture) &&
+                                  ` · ${weekDueLabel(t.weekNumber, t.dueBeforeLecture)}`}
+                              </p>
+                            </div>
+                            <span className="shrink-0 rounded-full bg-zinc-100 px-2 py-0.5 text-[10px] font-semibold text-zinc-700 dark:bg-zinc-800 dark:text-zinc-300">
+                              BARU
+                            </span>
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setTopicToDelete(t)}
+                            aria-label={`Hapus topik ${t.title}`}
+                            title="Hapus topik ini"
+                            className="tap m-2 min-h-11 min-w-11 rounded-card border border-red-300 px-2 text-sm font-medium text-red-600 transition hover:bg-red-50 focus-visible:ring-2 focus-visible:ring-brand-500 focus-visible:outline-none dark:border-red-800 dark:text-red-300 dark:hover:bg-red-950/40"
+                          >
+                            ✕
+                          </button>
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
 
                 <p className="mt-6 rounded-card bg-brand-500/10 px-4 py-3 text-xs leading-relaxed text-link">
                   Kunci: datang ke kuliah sudah punya kerangka. Modul ini <strong>bukan</strong>{" "}
@@ -797,8 +873,6 @@ export default function Home() {
         </ErrorBoundary>
       </div>
 
-      {/* Dialogs get their own boundary: a throw inside a modal used to blank the
-          whole app because only <main> was guarded. */}
       <ErrorBoundary>
         {composerOpen && (
           <Composer
@@ -837,8 +911,6 @@ export default function Home() {
             courseId={activeCourseId}
             onClose={() => setRpsOpen(false)}
             onReconciled={() => {
-              // Reconciling rewrites Topic.orderSource, which the dashboard
-              // badges read — refetch so they stop claiming "unverified".
               void refreshCourses();
               setStatus("Urutan RPS disimpan.");
             }}

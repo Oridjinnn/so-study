@@ -79,7 +79,11 @@ export async function POST(req: NextRequest) {
   try {
     await assertBudget();
   } catch (e) {
-    return NextResponse.json({ error: (e as Error).message }, { status: 429 });
+    console.error("[qa] budget check failed", e);
+    return NextResponse.json(
+      { error: "Gagal memeriksa anggaran AI; coba lagi nanti." },
+      { status: 429 },
+    );
   }
 
   // Resolve the RAG context. Preferred path: server-side retrieval from the
@@ -131,6 +135,13 @@ export async function POST(req: NextRequest) {
     retrievedTexts = ranked.map((r) => r.text);
   }
 
+  if (!body.moduleId && !legacyChunks.length) {
+    return NextResponse.json(
+      { error: "Tidak ada konteks modul untuk menjawab pertanyaan ini." },
+      { status: 400 },
+    );
+  }
+
   // Bound the prompt before spending a Gemini call (I7/I8, mitigates R4).
   const violation = firstGuardError(
     guardLength("question", "Pertanyaan", question, LIMITS.question),
@@ -156,6 +167,10 @@ export async function POST(req: NextRequest) {
     await logAIUsage({ topicId: body.topicId, kind: "qa", usage: result.usage });
     return NextResponse.json({ answer: result.text, usage: result.usage });
   } catch (e) {
-    return NextResponse.json({ error: (e as Error).message }, { status: 502 });
+    console.error("[qa] generation failed", e);
+    return NextResponse.json(
+      { error: "Gagal menghasilkan jawaban; coba lagi nanti." },
+      { status: 502 },
+    );
   }
 }

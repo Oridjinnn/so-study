@@ -75,11 +75,20 @@ export async function PATCH(
 
   const rows = await prisma.topicPaper.findMany({
     where: { topicId, topic: { ownerId } },
+    select: { paperId: true },
   });
-  for (const tp of rows) {
-    await prisma.topicPaper.update({
-      where: { topicId_paperId: { topicId, paperId: tp.paperId } },
-      data: { approved: approved.has(tp.paperId) },
+  await prisma.topicPaper.updateMany({
+    where: { topicId, topic: { ownerId } },
+    data: { approved: false },
+  });
+  if (approved.size > 0) {
+    await prisma.topicPaper.updateMany({
+      where: {
+        topicId,
+        topic: { ownerId },
+        paperId: { in: Array.from(approved) },
+      },
+      data: { approved: true },
     });
   }
   await prisma.topic.update({

@@ -57,8 +57,11 @@ interface DoajResponse {
   results?: DoajItem[];
 }
 
-function cacheKey(q: string): string {
-  const slug = q
+function cacheKey(q: string, opts: { yearMin?: number; perTopic?: number; major?: string }): string {
+  const parts = [q, String(opts.yearMin ?? 1970), String(opts.perTopic ?? 15), opts.major ?? ""]
+    .filter(Boolean)
+    .join("_");
+  const slug = parts
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, "_")
     .slice(0, 200);
@@ -92,10 +95,10 @@ function normalizeLanguage(langs?: string[]): string | undefined {
 
 export const doajProvider: SourceProvider = {
   name: "doaj",
-  async search(query: string, keywords: string[], opts: RetrieveOptions): Promise<SourcePaper[]> {
+  async search(query: string, keywords: string[], opts: RetrieveOptions, signal?: AbortSignal): Promise<SourcePaper[]> {
     try {
       const q = [query, ...keywords, opts.major].filter(Boolean).join(" ");
-      const key = cacheKey(q);
+      const key = cacheKey(q, { yearMin: opts.yearMin, perTopic: opts.perTopic, major: opts.major });
 
       if (opts.cache !== false) {
         const cached = await readCache(key);
@@ -110,7 +113,7 @@ export const doajProvider: SourceProvider = {
         `?pageSize=${Math.min(opts.perTopic ?? 15, 20)}` +
         `&mailto=${MAILTO}`;
 
-      const res = await fetch(url, { headers: { Accept: "application/json" } });
+      const res = await fetch(url, { headers: { Accept: "application/json" }, signal });
       if (!res.ok) return [];
       const json = (await res.json()) as DoajResponse;
       const items = json.results ?? [];

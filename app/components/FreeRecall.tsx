@@ -56,7 +56,6 @@ export default function FreeRecall({
   const [text, setText] = useState<string>(() => loadRecall(topicId));
 
   const chars = text.trim().length;
-  const words = text.trim() ? text.trim().split(/\s+/).length : 0;
   const ready = chars >= MIN_RECALL_CHARS;
 
   function update(value: string) {
@@ -94,8 +93,9 @@ export default function FreeRecall({
       />
 
       <p role="status" aria-live="polite" className="text-xs text-muted">
-        {words} kata · {chars}/{MIN_RECALL_CHARS} karakter
-        {ready ? " · cukup, silakan lanjut" : " — teruskan sedikit lagi"}
+        {ready
+          ? "Cukup! Lanjut ke Tanya"
+          : `${MIN_RECALL_CHARS - chars} karakter lagi`}
       </p>
 
       <button

@@ -70,7 +70,7 @@ export interface RetrieveOptions {
 
 export interface SourceProvider {
   name: string;
-  search(query: string, keywords: string[], opts: RetrieveOptions): Promise<SourcePaper[]>;
+  search(query: string, keywords: string[], opts: RetrieveOptions, signal?: AbortSignal): Promise<SourcePaper[]>;
 }
 
 /** Normalize any DOI spelling to the bare `10.xxxx/...` form, or null. */

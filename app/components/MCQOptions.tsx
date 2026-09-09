@@ -3,7 +3,10 @@
 type MCQOptionsProps = {
   options: string[];
   chosen?: string | null;
-  answered: boolean;
+  picked?: string | null;
+  answered?: boolean;
+  revealed?: boolean;
+  skipped?: boolean;
   answer: string;
   onChoose: (opt: string) => void;
   disabled?: boolean;
@@ -13,22 +16,35 @@ type MCQOptionsProps = {
 export default function MCQOptions({
   options,
   chosen,
+  picked,
   answered,
+  revealed,
+  skipped,
   answer,
   onChoose,
   disabled = false,
   name,
 }: MCQOptionsProps) {
+  const effectivePicked = picked ?? chosen ?? null;
+  const effectiveRevealed = revealed ?? answered ?? false;
+  const effectiveSkipped = skipped ?? false;
+
   return (
     <div className="mt-2 space-y-1">
       {options.map((opt) => {
         const isCorrect = opt === answer;
-        const isChosen = opt === chosen;
+        const isChosen = opt === effectivePicked;
         let cls = "border-zinc-300 dark:border-zinc-700";
-        if (answered && isCorrect)
-          cls = "border-emerald-400 bg-emerald-50 dark:border-emerald-600 dark:bg-emerald-950/40";
-        else if (answered && isChosen && !isCorrect)
-          cls = "border-red-400 bg-red-50 dark:border-red-600 dark:bg-red-950/40";
+        if (effectiveSkipped) {
+          cls = "border-zinc-200 dark:border-zinc-800 opacity-60";
+        } else if (effectiveRevealed && isCorrect) {
+          cls = "bg-emerald-900/50 text-emerald-100 border-emerald-500";
+        } else if (effectiveRevealed && isChosen && !isCorrect) {
+          cls = "bg-red-900/50 text-red-100 border-red-500";
+        } else if (!effectiveRevealed && effectivePicked && isChosen) {
+          cls =
+            "border-blue-400 bg-blue-50 dark:bg-blue-950/30 dark:border-blue-600";
+        }
         return (
           <label
             key={opt}
@@ -38,16 +54,21 @@ export default function MCQOptions({
               type="radio"
               name={name}
               value={opt}
-              disabled={disabled}
+              disabled={
+                disabled ||
+                effectiveSkipped ||
+                effectiveRevealed ||
+                effectivePicked != null
+              }
               checked={isChosen}
               onChange={() => onChoose(opt)}
             />{" "}
             {opt}
-            {answered && isCorrect && (
-              <span className="ml-auto text-xs font-semibold text-emerald-600">benar</span>
+            {effectiveRevealed && isCorrect && (
+              <span className="ml-auto text-xs font-semibold">benar</span>
             )}
-            {answered && isChosen && !isCorrect && (
-              <span className="ml-auto text-xs font-semibold text-red-600">salah</span>
+            {effectiveRevealed && isChosen && !isCorrect && (
+              <span className="ml-auto text-xs font-semibold">salah</span>
             )}
           </label>
         );

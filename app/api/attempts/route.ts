@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/src/lib/prisma";
 import { requireUser, notFoundForUser } from "@/src/lib/tenancy";
 import { review, outcomeToGrade, isDue, type SchedulerState } from "@/src/lib/scheduler";
+import { mapWithConcurrencyLimit } from "@/src/lib/concurrency";
 import type { AssessmentAttempt } from "@/app/lib/types";
 
 export const runtime = "nodejs";
@@ -113,18 +114,15 @@ export async function POST(req: NextRequest) {
   if (!ownTopic) return notFoundForUser("Topik");
   if (!ownModule) return notFoundForUser("Modul");
 
-  const created = await Promise.all(
-    items.map(async (it) => {
+  const created = await mapWithConcurrencyLimit(
+    items,
+    4,
+    async (it) => {
       const confidence =
         typeof it.confidence === "number" ? Math.round(it.confidence) : null;
       const isCorrect =
         typeof it.isCorrect === "boolean" ? it.isCorrect : null;
 
-      // Carry forward this card's spaced-repetition state so the interval
-      // expands across reviews instead of restarting every time. Scoped through
-      // the topic relation as well as the (already verified) ids: the owner
-      // filter is folded into the query itself so this read stays safe even if
-      // the pre-check above is ever refactored away.
       const prev = await prisma.assessmentAttempt.findFirst({
         where: {
           moduleId,
@@ -162,7 +160,7 @@ export async function POST(req: NextRequest) {
           scheduledNextAt: nextReview,
         },
       });
-    }),
+    },
   );
 
   return NextResponse.json({ ok: true, attempts: created.map(serialize) });

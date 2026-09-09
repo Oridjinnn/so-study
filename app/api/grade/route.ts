@@ -80,7 +80,11 @@ export async function POST(req: NextRequest) {
   try {
     await assertBudget();
   } catch (e) {
-    return NextResponse.json({ error: (e as Error).message }, { status: 429 });
+    console.error("[grade] budget check failed", e);
+    return NextResponse.json(
+      { error: "Gagal memeriksa anggaran AI; coba lagi nanti." },
+      { status: 429 },
+    );
   }
 
   const prompt =
@@ -94,6 +98,10 @@ export async function POST(req: NextRequest) {
     await logAIUsage({ topicId: body.topicId, kind: "grade", usage: result.usage });
     return NextResponse.json({ feedback: result.text, usage: result.usage });
   } catch (e) {
-    return NextResponse.json({ error: (e as Error).message }, { status: 502 });
+    console.error("[grade] generation failed", e);
+    return NextResponse.json(
+      { error: "Gagal menghasilkan umpan balik; coba lagi nanti." },
+      { status: 502 },
+    );
   }
 }

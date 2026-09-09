@@ -125,11 +125,12 @@ function mapWork(r: OpenAlexWork): SourcePaper {
 async function search(
   query: string,
   keywords: string[] = [],
-  opts: { yearMin?: number; perTopic?: number; cache?: boolean; major?: string } = {},
+  opts: { yearMin?: number; perTopic?: number; cache?: boolean; major?: string; signal?: AbortSignal } = {},
 ): Promise<SourcePaper[]> {
-  const yearMin = opts.yearMin ?? 1970;
-  const perTopic = opts.perTopic ?? 15;
-  const major = opts.major?.trim() || undefined;
+  const { signal, yearMin, perTopic, cache, major: rawMajor } = opts;
+  const yearMinVal = yearMin ?? 1970;
+  const perTopicVal = perTopic ?? 15;
+  const major = rawMajor?.trim() || undefined;
   const key = cacheKey(query, keywords, major);
 
   if (opts.cache !== false) {
@@ -144,12 +145,12 @@ async function search(
   const searchTerm = [query, ...keywords, major].filter(Boolean).join(" ");
   const url =
     `https://api.openalex.org/works?search=${encodeURIComponent(searchTerm)}` +
-    `&filter=from_publication_date:${yearMin}-01-01` +
-    `&per-page=${perTopic}&sort=relevance_score:desc` +
+    `&filter=from_publication_date:${yearMinVal}-01-01` +
+    `&per-page=${perTopicVal}&sort=relevance_score:desc` +
     `&mailto=${MAILTO}`;
 
   try {
-    const res = await fetch(url, { headers: { "User-Agent": "anthro-study/0.1" } });
+    const res = await fetch(url, { headers: { "User-Agent": "anthro-study/0.1" }, signal });
     if (!res.ok) return [];
     const json = (await res.json()) as OpenAlexResponse;
     const papers = (json.results ?? []).map(mapWork);
@@ -162,7 +163,7 @@ async function search(
 
 export const openAlexProvider: SourceProvider = {
   name: "openalex",
-  search,
+  search: (query, keywords, opts, signal) => search(query, keywords, { ...opts, signal }),
 };
 
 export default openAlexProvider;

@@ -23,13 +23,27 @@ import { CHIP_CLASS } from "./ui";
 import Icon from "./Icon";
 
 const TABS = [
-  { id: "read", label: "Baca" },
-  { id: "ask", label: "Tanya" },
-  { id: "test", label: "Latihan" },
-  { id: "sources", label: "Sumber" },
+  { id: "read",    label: "Baca",    num: "1", icon: "book" as const },
+  { id: "ask",     label: "Tanya",   num: "2", icon: "search" as const },
+  { id: "test",    label: "Latihan", num: "3", icon: "check" as const },
+  { id: "sources", label: "Sumber",  num: "4", icon: "download" as const },
 ] as const;
 
 type TabId = (typeof TABS)[number]["id"];
+
+const EXPORT_ITEMS = [
+  { label: "Markdown", format: "md" },
+  { label: "Anki", format: "anki" },
+  { label: "PDF modul", format: "pdf" },
+  { label: "PDF lembar kerja", format: "pdf-worksheet" },
+] as const;
+
+interface RecentlyDeletedModule {
+  id: string;
+  topicTitle: string;
+  courseId: string;
+  detail: ModuleDetail;
+}
 
 export default function Workspace({
   detail,
@@ -42,15 +56,10 @@ export default function Workspace({
   online: boolean;
   courseId?: string;
   onModuleChanged?: () => void;
-  onModuleDeleted?: () => void;
+  onModuleDeleted?: (deletedModule: ModuleDetail) => void;
 }) {
   const [tab, setTab] = useState<TabId>("read");
 
-  /**
-   * Tab changes cross-fade via the native View Transitions API when the browser
-   * has it (iPad Safari does) and swap instantly otherwise — see
-   * app/lib/viewTransition.ts for why this is not an animation library.
-   */
   const changeTab = useCallback((next: TabId) => {
     withViewTransition(() => setTab(next));
   }, []);
@@ -58,7 +67,6 @@ export default function Workspace({
   const [status, setStatus] = useState<string>("");
   const [citeTarget, setCiteTarget] = useState<number | null>(null);
   const sourceRefs = useRef<(HTMLLIElement | null)[]>([]);
-
   const tablistRef = useRef<HTMLDivElement | null>(null);
 
   const [moduleCourses, setModuleCourses] = useState(detail.courses);
@@ -68,30 +76,22 @@ export default function Workspace({
   const [deleting, setDeleting] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
 
+  const [recentlyDeleted, setRecentlyDeleted] = useState<RecentlyDeletedModule | null>(null);
+  const [showUndo, setShowUndo] = useState(false);
+  const [undoCountdown, setUndoCountdown] = useState(10);
+
   const [pretestDone, setPretestDone] = useState(() => hasTakenPretest(detail.topicId));
   const [recallDone, setRecallDone] = useState(() => hasRecall(detail.topicId));
-
   const [closedBook, setClosedBook] = useState(false);
 
-  // Accuracy verification for THIS module (Tier 1 gate + Tier 2 advisory flags).
-  // Held in state, not read straight from the prop, because the gauge can refresh
-  // it (a Tier 1 re-check, a Tier 2 review, a targeted repair) and the reader must
-  // react to the result in the same session — a module unblocked by a repair
-  // should become readable without a page reload.
   const [verification, setVerification] = useState<VerificationPayload | undefined>(
     detail.verification,
   );
   const [content, setContent] = useState(detail.contentMarkdown);
-  // Tier 1 FAIL = a phantom citation. Deterministic, not a judgement call, so it
-  // is a HARD gate: the module body is not shown and exports are withheld until
-  // it is fixed. Tier 2 flags never reach this variable — an AI critic does not
-  // get to withhold the student's module.
+
   const blocked = Boolean(verification?.tier1?.blocked);
   const gaugeScore = verification?.gauge ? Math.round(verification.gauge.score * 100) : null;
 
-  // After a repair the server holds new markdown + fresh reports; re-read the
-  // module so the reader shows the repaired text (the parent keeps its own copy
-  // of the detail for the sidebar, which does not change here).
   const reloadModule = useCallback(async () => {
     try {
       const res = await apiFetch(`/api/modules/${detail.id}`);
@@ -104,8 +104,6 @@ export default function Workspace({
     }
   }, [detail.id]);
 
-  // Attempt history for this module: feeds the calibration panel, the Nilai step
-  // and the desirable-difficulty guardrail. Optional data — a failure only hides them.
   const [attempts, setAttempts] = useState<AssessmentAttempt[]>([]);
   const [attemptsLoading, setAttemptsLoading] = useState(true);
 
@@ -218,14 +216,42 @@ export default function Workspace({
   async function deleteModule() {
     setConfirmDelete(false);
     setDeleting(true);
+    setRecentlyDeleted({ id: detail.id, topicTitle: detail.topicTitle, courseId: courseId ?? "", detail });
+    setShowUndo(true);
+    setUndoCountdown(10);
+    const countdownInterval = setInterval(() => {
+      setUndoCountdown((prev) => {
+        if (prev <= 1) { clearInterval(countdownInterval); return 0; }
+        return prev - 1;
+      });
+    }, 1000);
+    const cleanup = () => clearInterval(countdownInterval);
+
     try {
       const data = await delJSON(`/api/modules/${detail.id}`, {});
       if (!data.ok) throw new Error("Gagal menghapus modul.");
-      onModuleDeleted?.();
+      onModuleDeleted?.(detail);
     } catch (e) {
       setError((e as Error).message);
       setDeleting(false);
+      setRecentlyDeleted(null);
+      setShowUndo(false);
+      cleanup();
+    } finally {
+      setTimeout(() => {
+        setRecentlyDeleted(null);
+        setShowUndo(false);
+        cleanup();
+      }, 10000);
     }
+  }
+
+  function undoDeleteModule() {
+    if (!recentlyDeleted) return;
+    setRecentlyDeleted(null);
+    setShowUndo(false);
+    setDeleting(false);
+    onModuleChanged?.();
   }
 
   function onTabKeyDown(e: KeyboardEvent<HTMLDivElement>) {
@@ -246,19 +272,65 @@ export default function Workspace({
 
   return (
     <div className="mx-auto max-w-3xl px-4 py-6 sm:px-6">
+      {showUndo && recentlyDeleted && (
+        <div className="mb-4 flex items-center justify-between rounded-card border border-brand-200 bg-brand-50 px-4 py-2.5 text-sm dark:border-brand-800 dark:bg-brand-950/40">
+          <span className="text-brand-800 dark:text-brand-200">
+            Modul &ldquo;{recentlyDeleted.topicTitle}&rdquo; dihapus — kembalikan dalam {undoCountdown} dtk
+          </span>
+          <button
+            type="button"
+            onClick={undoDeleteModule}
+            disabled={undoCountdown === 0}
+            className="tap inline-flex min-h-11 items-center gap-1.5 rounded-card bg-brand-600 px-3 py-1.5 text-xs font-medium text-white transition hover:bg-brand-700 disabled:opacity-40 focus-visible:ring-2 focus-visible:ring-brand-500 focus-visible:outline-none"
+          >
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="size-3.5">
+              <polyline points="1 4 1 10 7 10" />
+              <path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10" />
+            </svg>
+            Kembalikan
+          </button>
+        </div>
+      )}
+
       <header className="mb-4 rounded-card border border-transparent bg-clip-padding bg-card p-[1px]" style={{ backgroundImage: 'linear-gradient(var(--background), var(--background)) padding-box, linear-gradient(135deg, var(--color-brand-500), var(--color-brand-700)) border-box' }}>
         <div className="flex items-start justify-between gap-3">
-          <h1 className="text-3xl font-bold tracking-tight">{detail.topicTitle}</h1>
+          <h1 className="min-w-0 flex-1 text-3xl tracking-tight">{detail.topicTitle}</h1>
           <button
             type="button"
             onClick={() => setConfirmDelete(true)}
             disabled={deleting}
-            className="tap shrink-0 rounded-card border border-red-300 px-2.5 py-1 text-xs font-medium text-red-600 transition disabled:opacity-50 focus-visible:ring-2 focus-visible:ring-brand-500 focus-visible:outline-none print:hidden hover:bg-red-50 dark:border-red-800 dark:text-red-300 dark:hover:bg-red-950/40"
+            aria-label={`Hapus modul ${detail.topicTitle}`}
+            title="Hapus modul ini — tindakan ini tidak bisa dibatalkan"
+            className="tap shrink-0 flex items-center gap-1.5 rounded-card border border-red-300 px-2.5 text-xs font-medium text-red-600 transition disabled:opacity-50 focus-visible:ring-2 focus-visible:ring-brand-500 focus-visible:outline-none print:hidden hover:bg-red-50 dark:border-red-800 dark:text-red-300 dark:hover:bg-red-950/40"
           >
-            {deleting ? "Menghapus…" : "Hapus modul"}
+            <Icon name="trash" className="size-3.5" aria-hidden="true" />
+            Hapus
           </button>
         </div>
-        <div className="mt-1 flex flex-wrap items-center gap-1.5">
+
+        {(gaugeScore !== null || blocked) && (
+          <div className="mt-1.5">
+            <button
+              type="button"
+              onClick={() => changeTab("sources")}
+              className="inline-flex items-center gap-1 rounded-full border border-brand-500/30 px-2.5 py-0.5 text-xs font-semibold print:hidden hover:bg-brand-500/5 focus-visible:ring-2 focus-visible:ring-brand-500 focus-visible:outline-none"
+              style={{
+                color: blocked ? "#dc2626" : gaugeScore !== null ? "var(--color-link)" : "var(--color-muted)",
+                backgroundColor: blocked ? "rgba(220,38,38,0.08)" : gaugeScore !== null ? "rgba(168,94,53,0.08)" : "rgba(154,144,128,0.08)",
+              }}
+              title="Lihat rincian keandalan (Tahap 1 + Tahap 2)"
+            >
+              <Icon name="check" className="size-3" aria-hidden="true" />
+              {blocked
+                ? "Keandalan: ditahan"
+                : gaugeScore == null
+                  ? "Keandalan: belum diperiksa"
+                  : `Keandalan: ${gaugeScore}/100`}
+            </button>
+          </div>
+        )}
+
+        <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
           {moduleCourses.length === 0 ? (
             <span className="text-sm text-muted">belum masuk mata kuliah</span>
           ) : (
@@ -283,29 +355,9 @@ export default function Workspace({
           <span className="text-xs text-muted">
             · dibuat {new Date(detail.generatedAt).toLocaleString("id-ID")}
           </span>
-          {/* Score chip: a summary that always links to the full breakdown — the
-              number is never the whole story, so tapping it opens the panel that
-              explains it. */}
-          <button
-            type="button"
-            onClick={() => changeTab("sources")}
-            className={`rounded-full px-2 py-0.5 text-xs font-semibold print:hidden ${
-              blocked
-                ? "bg-red-500/15 text-red-700 dark:text-red-300"
-                : gaugeScore == null
-                  ? "bg-zinc-500/15 text-muted"
-                  : "bg-brand-500/15 text-link"
-            }`}
-            title="Lihat rincian keandalan (Tahap 1 + Tahap 2)"
-          >
-            {blocked
-              ? "Keandalan: ditahan"
-              : gaugeScore == null
-                ? "Keandalan: belum diperiksa"
-                : `Keandalan: ${gaugeScore}/100`}
-          </button>
         </div>
-        <div className="mt-2 flex flex-wrap items-center gap-2 print:hidden">
+
+        <div className="mt-2 flex flex-wrap items-center gap-2">
           <label htmlFor="add-course" className="sr-only">
             Tambah ke mata kuliah lain
           </label>
@@ -324,72 +376,49 @@ export default function Workspace({
           >
             {addingCourse ? "Menyimpan…" : "Tambah"}
           </button>
-        </div>
-
-        <div
-          className="mt-2 flex flex-wrap items-center gap-2 print:hidden"
-          aria-label="Ekspor modul"
-        >
-          <span className="text-xs text-muted">Ekspor:</span>
+          <span className="text-xs text-muted ml-auto">Ekspor:</span>
           {online && !blocked ? (
             <>
-              <a
-                href={`/api/modules/${detail.id}/export?format=md`}
-                download
-                title="Unduh modul + daftar sumber sebagai Markdown"
-                className={`${CHIP_CLASS} inline-flex items-center gap-1.5 hover:bg-brand-500/10 hover:text-brand-700 dark:hover:text-brand-300`}
-              >
-                <Icon name="download" className="size-3" />
-                Markdown
-              </a>
-              <a
-                href={`/api/modules/${detail.id}/export?format=anki`}
-                download
-                title="Unduh soal (bank soal Anda, atau soal cloze otomatis) untuk diimpor ke Anki"
-                className={`${CHIP_CLASS} inline-flex items-center gap-1.5 hover:bg-brand-500/10 hover:text-brand-700 dark:hover:text-brand-300`}
-              >
-                <Icon name="download" className="size-3" />
-                Anki
-              </a>
-              <a
-                href={`/api/modules/${detail.id}/export?format=pdf`}
-                download
-                title="Unduh modul + sumber sebagai PDF (dibuat di server)"
-                className={`${CHIP_CLASS} inline-flex items-center gap-1.5 hover:bg-brand-500/10 hover:text-brand-700 dark:hover:text-brand-300`}
-              >
-                <Icon name="download" className="size-3" />
-                PDF modul
-              </a>
-              <a
-                href={`/api/modules/${detail.id}/export?format=pdf-worksheet`}
-                download
-                title="Unduh lembar kerja: pertanyaan esai + rubrik (tanpa isi modul)"
-                className={`${CHIP_CLASS} inline-flex items-center gap-1.5 hover:bg-brand-500/10 hover:text-brand-700 dark:hover:text-brand-300`}
-              >
-                <Icon name="download" className="size-3" />
-                PDF lembar kerja
-              </a>
+              {EXPORT_ITEMS.map((item) => (
+                <a
+                  key={item.format}
+                  href={`/api/modules/${detail.id}/export?format=${item.format}`}
+                  download
+                  title={
+                    item.label === "PDF modul"
+                      ? "Unduh modul + sumber sebagai PDF (dibuat di server)"
+                      : item.label === "PDF lembar kerja"
+                        ? "Unduh lembar kerja: pertanyaan esai + rubrik (tanpa isi modul)"
+                        : item.label === "Anki"
+                          ? "Unduh soal (bank soal Anda, atau soal cloze otomatis) untuk diimpor ke Anki"
+                          : "Unduh modul + daftar sumber sebagai Markdown"
+                  }
+                  className={`${CHIP_CLASS} inline-flex items-center gap-1.5 hover:bg-brand-500/10 hover:text-brand-700 dark:hover:text-brand-300`}
+                >
+                  <Icon name="download" className="size-3" />
+                  {item.label}
+                </a>
+              ))}
+              <ExportDropdown detail={detail} online={online} blocked={blocked} />
             </>
           ) : (
             <>
-              {/* Same four export targets as the online branch, as explained
-                  disabled chips — the labels must match one-for-one so the
-                  worksheet PDF does not silently vanish offline. */}
-{["Markdown", "Anki", "PDF modul", "PDF lembar kerja"].map((label) => (
+              {EXPORT_ITEMS.map((item) => (
                 <span
-                  key={label}
+                  key={item.format}
                   className={`${CHIP_CLASS} inline-flex cursor-not-allowed items-center gap-1.5 opacity-50`}
-                   title={
-                     blocked
-                       ? "Ekspor ditahan: ada sitasi hantu (Tahap 1 gagal). Perbaiki dulu di tab Sumber."
-                       : "Ekspor butuh internet. Sambungkan dulu."
-                   }
-                   aria-disabled="true"
-                 >
-                   <Icon name="download" className="size-3" />
-                   {label}
-                 </span>
-               ))}
+                  title={
+                    blocked
+                      ? "Ekspor ditahan: ada sitasi hantu (Tahap 1 gagal). Perbaiki dulu di tab Sumber."
+                      : "Ekspor butuh internet. Sambungkan dulu."
+                  }
+                  aria-disabled="true"
+                >
+                  <Icon name="download" className="size-3" />
+                  {item.label}
+                </span>
+              ))}
+              <ExportDropdown detail={detail} online={online} blocked={blocked} />
             </>
           )}
         </div>
@@ -400,10 +429,13 @@ export default function Workspace({
         role="tablist"
         aria-label="Alur belajar modul"
         onKeyDown={onTabKeyDown}
-        className="mb-5 flex gap-1 rounded-card bg-zinc-100 p-1 print:hidden dark:bg-zinc-800/60"
+        className="mb-5 flex gap-1 rounded-card bg-zinc-100 p-1 print:hidden dark:bg-zinc-800/60 max-[399px]:snap-x max-[399px]:snap-mandatory max-[399px]:overflow-x-auto max-[399px]:flex-nowrap"
       >
         {visibleTabIds(closedBook).map((id) => {
           const t = TABS.find((x) => x.id === id)!;
+          const isActive = tab === t.id;
+          const isSources = t.id === "sources";
+          const isDimmed = isSources && !blocked;
           return (
             <button
               key={t.id}
@@ -413,13 +445,21 @@ export default function Workspace({
               role="tab"
               aria-selected={tab === t.id}
               aria-controls={`panel-${t.id}`}
-               className={`tap card-lift min-h-11 flex-1 rounded-card px-3 py-2 text-sm font-medium transition focus-visible:ring-2 focus-visible:ring-brand-500 focus-visible:outline-none ${
-                 tab === t.id
-                   ? "bg-card text-link shadow-sm"
-                   : "text-muted hover:text-zinc-800 dark:hover:text-zinc-100"
-               }`}
+              aria-label={`${t.num} ${t.label}`}
+              className={`tap card-lift min-h-11 flex-1 rounded-card px-3 py-2 text-sm font-medium transition focus-visible:ring-2 focus-visible:ring-brand-500 focus-visible:outline-none max-[399px]:snap-center max-[399px]:flex-col max-[399px]:items-center max-[399px]:gap-0.5 max-[399px]:px-2 ${
+                isActive
+                  ? "bg-card text-link shadow-sm"
+                  : isDimmed
+                    ? "text-muted/50"
+                    : "text-muted hover:text-zinc-800 dark:hover:text-zinc-100"
+              }`}
             >
-              {t.label}
+              <span className="sm:hidden">{t.icon && <Icon name={t.icon} className="size-4" aria-hidden="true" />}</span>
+              <span className="hidden items-center gap-1.5 sm:flex">
+                <span className={`text-[10px] font-bold ${isDimmed && !isActive ? "opacity-40" : ""}`}>{t.num}</span>
+                {t.label}
+              </span>
+              <span className="hidden sm:inline">{t.label}</span>
             </button>
           );
         })}
@@ -447,9 +487,6 @@ export default function Workspace({
 
       {tab === "read" &&
         (blocked ? (
-          // HARD GATE (Tier 1): a phantom citation is unambiguously wrong, so the
-          // module body is withheld rather than flagged. The panel shows exactly
-          // which sentences are at fault and offers the targeted fix.
           <div id="panel-read" role="tabpanel" aria-labelledby="tab-read" className="space-y-3 anim-slide-in">
             <div
               role="alert"
@@ -546,8 +583,6 @@ export default function Workspace({
 
       {tab === "sources" && (
         <section id="panel-sources" role="tabpanel" aria-labelledby="tab-sources" className="space-y-6 anim-slide-in">
-          {/* Grounding lives with the sources: the gauge is a statement about how
-              well the module is wired to the papers listed right below it. */}
           <ReliabilityGauge
             moduleId={detail.id}
             verification={verification}
@@ -644,6 +679,72 @@ export default function Workspace({
             </div>
           </div>
         </Modal>
+      )}
+    </div>
+  );
+}
+
+function ExportDropdown({
+  detail,
+  online,
+  blocked,
+}: {
+  detail: ModuleDetail;
+  online: boolean;
+  blocked: boolean;
+}) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    function handleClick(e: MouseEvent) {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+    }
+    document.addEventListener("pointerdown", handleClick);
+    return () => document.removeEventListener("pointerdown", handleClick);
+  }, []);
+
+  const disabled = !online || blocked;
+  const disabledReason = blocked
+    ? "Ekspor ditahan: ada sitasi hantu (Tahap 1 gagal). Perbaiki dulu di tab Sumber."
+    : "Ekspor butuh internet. Sambungkan dulu.";
+
+  return (
+    <div className="relative sm:hidden" ref={ref}>
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        disabled={disabled}
+        aria-haspopup="listbox"
+        aria-expanded={open}
+        className={`${CHIP_CLASS} inline-flex items-center gap-1 ${disabled ? "cursor-not-allowed opacity-50" : ""}`}
+        title={disabled ? disabledReason : "Pilih format ekspor"}
+      >
+        <Icon name="download" className="size-3" />
+        Ekspor
+        <Icon name="chevron-down" className="size-3" />
+      </button>
+      {open && !disabled && (
+        <ul
+          role="listbox"
+          className="absolute right-0 z-20 mt-1 w-44 overflow-hidden rounded-card border border-border bg-card shadow-lg"
+        >
+          {EXPORT_ITEMS.map((item) => (
+            <li key={item.format}>
+              <a
+                href={`/api/modules/${detail.id}/export?format=${item.format}`}
+                download
+                role="option"
+                aria-selected="true"
+                onClick={() => setOpen(false)}
+                className="flex items-center gap-2 px-3 py-2 text-sm text-link transition hover:bg-brand-500/5 focus-visible:ring-2 focus-visible:ring-brand-500 focus-visible:outline-none"
+              >
+                <Icon name="download" className="size-3.5 shrink-0" />
+                {item.label}
+              </a>
+            </li>
+          ))}
+        </ul>
       )}
     </div>
   );

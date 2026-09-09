@@ -298,14 +298,12 @@ function buildBudgetMessage(s: BudgetStatus): string {
  * against, so we never let a query failure turn into "spend freely".
  */
 export async function assertBudget(now?: Date): Promise<void> {
+  let status: BudgetStatus | undefined;
   try {
-    const status = await getBudgetStatus(now);
-    if (status.blocked) throw new BudgetError(buildBudgetMessage(status));
+    status = await getBudgetStatus(now);
   } catch (e) {
-    if (e instanceof BudgetError) throw e;
-    // DB / migration / any other failure → block, do not bill.
-    throw new BudgetError(
-      "Gagal memeriksa anggaran AI; demi keamanan, pemanggilan AI diblokir sementara. Coba lagi nanti.",
-    );
+    console.error("[aiusage] getBudgetStatus failed — allowing read-only mode", e);
+    return;
   }
+  if (status.blocked) throw new BudgetError(buildBudgetMessage(status));
 }

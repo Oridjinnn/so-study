@@ -59,25 +59,26 @@ export async function POST(req: NextRequest) {
   try {
     await assertBudget();
   } catch (e) {
-    return NextResponse.json({ error: (e as Error).message }, { status: 429 });
+    console.error("[essay] budget check failed", e);
+    return NextResponse.json(
+      { error: "Gagal memeriksa anggaran AI; coba lagi nanti." },
+      { status: 429 },
+    );
   }
 
   try {
     const essayPrompt = await generateEssayPromptWithFallback(
       mod.contentMarkdown ?? "",
-      // The module's OWN topic id, not `body.topicId`. The id in the body is
-      // unverified caller input and is used only to attribute the AIUsage row, so
-      // trusting it let a caller bill their spend to another student's topic —
-      // her cost panel would then show a row she never caused. AIUsage stays
-      // global (one shared key/wallet), but its attribution should still be true.
       mod.topicId,
       mod.topic?.title,
     );
-    // Scoped write: the owner rides into the UPDATE's WHERE clause next to the
-    // unique id, so the mutation cannot outlive the ownership check above.
     await prisma.module.update({ where: { id: moduleId, ownerId }, data: { essayPrompt } });
     return NextResponse.json({ essayPrompt });
   } catch (e) {
-    return NextResponse.json({ error: (e as Error).message }, { status: 502 });
+    console.error("[essay] prompt generation failed", e);
+    return NextResponse.json(
+      { error: "Gagal menghasilkan pertanyaan esai; coba lagi nanti." },
+      { status: 502 },
+    );
   }
 }

@@ -46,7 +46,7 @@ describe("PretestGate localStorage gate", () => {
 
     expect(await screen.findByText(/Prequestion satu/)).toBeInTheDocument();
 
-    await user.click(screen.getByRole("button", { name: /Lewati pra-tes/ }));
+    await user.click(screen.getAllByRole("button", { name: /Lewati pra-tes/ })[0]);
 
     await waitFor(() => expect(onDone).toHaveBeenCalledTimes(1));
     expect(window.localStorage.getItem(pretestKey("t1"))).not.toBeNull();
